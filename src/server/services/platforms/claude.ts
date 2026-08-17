@@ -16,7 +16,12 @@ export class ClaudeAdapter extends StandardApiProviderAdapterBase {
     return normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1');
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(
+    baseUrl: string,
+    apiToken: string,
+    _platformUserId?: number,
+    contextSourceScope?: string,
+  ): Promise<string[]> {
     const openAiCompatibleBaseUrl = resolveOpenAiCompatibleBaseUrl(baseUrl);
     try {
       const claudeModels = await this.fetchModelsFromStandardEndpoint({
@@ -25,6 +30,7 @@ export class ClaudeAdapter extends StandardApiProviderAdapterBase {
           'x-api-key': apiToken,
           'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
         },
+        contextSourceScope,
       });
       if (claudeModels.length > 0) return claudeModels;
     } catch (error) {
@@ -36,6 +42,7 @@ export class ClaudeAdapter extends StandardApiProviderAdapterBase {
     return this.fetchModelsFromStandardEndpoint({
       baseUrl: openAiCompatibleBaseUrl,
       headers: { Authorization: `Bearer ${apiToken}` },
+      contextSourceScope,
     });
   }
 }
