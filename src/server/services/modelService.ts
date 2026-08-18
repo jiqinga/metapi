@@ -23,7 +23,6 @@ import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
-import { rebuildAllPatternRouteChannels } from './patternRouteChannelSyncService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
@@ -1562,19 +1561,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
   }
 
-  const exactRouteTopologyChanged = createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0;
-  const patternRouteSync = exactRouteTopologyChanged
-    ? await rebuildAllPatternRouteChannels()
-    : {
-      rebuiltRoutes: 0,
-      routeIds: [],
-      removedChannels: 0,
-      createdChannels: 0,
-    };
-  createdChannels += patternRouteSync.createdChannels;
-  removedChannels += patternRouteSync.removedChannels;
-
-  if (exactRouteTopologyChanged || patternRouteSync.createdChannels > 0 || patternRouteSync.removedChannels > 0) {
+  if (createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0) {
     await clearAllRouteDecisionSnapshots();
   }
 
@@ -1586,9 +1573,6 @@ export async function rebuildTokenRoutesFromAvailability() {
     createdChannels,
     removedChannels,
     removedRoutes,
-    rebuiltPatternRoutes: patternRouteSync.rebuiltRoutes,
-    patternRouteCreatedChannels: patternRouteSync.createdChannels,
-    patternRouteRemovedChannels: patternRouteSync.removedChannels,
   };
 }
 
