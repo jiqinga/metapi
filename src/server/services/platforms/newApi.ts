@@ -1,4 +1,4 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement } from './base.js';
+import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement, type LoginResult } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
@@ -969,7 +969,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     username: string,
     password: string,
-  ): Promise<{ success: boolean; accessToken?: string; username?: string; message?: string }> {
+  ): Promise<LoginResult> {
     try {
       const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
@@ -983,11 +983,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
 
       const accessToken = this.extractLoginAccessToken(res);
+      const platformUserId = this.extractLoginUserId(res);
       if (res?.success && accessToken) {
         return {
           success: true,
           accessToken,
           username,
+          platformUserId,
         };
       }
       if (res?.success && this.hasUsableSessionCookie(cookieHeader)) {
@@ -995,6 +997,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
           success: true,
           accessToken: cookieHeader,
           username,
+          platformUserId,
         };
       }
 
