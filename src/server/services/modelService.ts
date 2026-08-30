@@ -1422,7 +1422,11 @@ export async function refreshModelsForAccount(
       })),
     ).run();
   }
-  setModelContextLengths(discoveredContextLengths, modelContextScope);
+  if (discoveredContextLengths.size > 0) {
+    setModelContextLengths(discoveredContextLengths, modelContextScope);
+  } else {
+    clearModelContextLengthCache(modelContextScope);
+  }
 
   await setAccountRuntimeHealth(account.id, {
     state: 'healthy',
