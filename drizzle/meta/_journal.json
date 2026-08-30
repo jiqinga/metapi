@@ -218,6 +218,13 @@
       "when": 1788501924576,
       "tag": "0031_account_disabled_models",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1785715200000,
+      "tag": "0032_site_max_concurrency",
+      "breakpoints": true
     }
   ]
 }

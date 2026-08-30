@@ -2257,6 +2257,12 @@
           "notNull": false,
           "defaultValue": "false",
           "primaryKey": false
+        },
+        "max_concurrency": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
         }
       }
     },

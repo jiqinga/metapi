@@ -106,31 +106,36 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
   const fallbackBase = baseRaw.replace(/\/+$/, '');
   let path = pathRaw.startsWith('/') ? pathRaw : `/${pathRaw}`;
 
+  const stripVersionPrefix = (baseVersion?: string) => {
+    const requestVersionMatch = path.match(/^\/(v\d+(?:beta)?)(?=\/|$)/i);
+    if (!requestVersionMatch) return;
+    const requestVersion = requestVersionMatch[1];
+    const normalizedRequestVersion = requestVersion.toLowerCase();
+    const normalizedBaseVersion = baseVersion?.toLowerCase();
+    // Compatibility endpoints conventionally receive a /v1 request prefix,
+    // while native Gemini paths use /v1beta and must remain intact when the
+    // configured base is a different API version.
+    if (normalizedRequestVersion !== 'v1' && normalizedRequestVersion !== normalizedBaseVersion) return;
+    path = path.slice(requestVersion.length + 1) || '/';
+  };
+
   if (!fallbackBase) return path || '/';
   if (!path || path === '/') return fallbackBase;
 
   try {
     const parsed = new URL(baseRaw);
     const basePath = parsed.pathname.replace(/\/+$/, '');
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(basePath);
-    if (baseHasVersionSuffix) {
-      if (path === '/v1') {
-        path = '/';
-      } else if (path.startsWith('/v1/')) {
-        path = path.slice('/v1'.length) || '/';
-      }
+    const baseVersionMatch = basePath.match(/\/(?:api\/)?(v\d+(?:beta)?)$/i);
+    if (baseVersionMatch) {
+      stripVersionPrefix(baseVersionMatch[1]);
     }
 
     const joinedPath = joinPath(basePath, path);
     return `${formatUrlOrigin(parsed)}${joinedPath}${parsed.search}${parsed.hash}`;
   } catch {
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(fallbackBase);
-    if (baseHasVersionSuffix) {
-      if (path === '/v1') {
-        path = '/';
-      } else if (path.startsWith('/v1/')) {
-        path = path.slice('/v1'.length) || '/';
-      }
+    const fallbackBaseVersionMatch = fallbackBase.match(/\/(?:api\/)?(v\d+(?:beta)?)$/i);
+    if (fallbackBaseVersionMatch) {
+      stripVersionPrefix(fallbackBaseVersionMatch[1]);
     }
 
     return `${fallbackBase}${path}`;

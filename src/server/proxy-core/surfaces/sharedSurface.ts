@@ -17,11 +17,12 @@ import { buildUpstreamUrl } from '../orchestration/upstreamRequest.js';
 import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
+import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { readRuntimeResponseText } from '../executors/types.js';
 import { selectProxyChannelForAttempt } from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
-type SurfaceWarningScope = 'chat' | 'responses';
+type SurfaceWarningScope = 'chat' | 'responses' | 'rerank';
 
 type SurfaceSelectedChannel = {
   channel: { routeId: number | null; id: number };
@@ -162,10 +163,11 @@ export async function acquireSurfaceChannelLease(input: {
   stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
+    site: { id: number; maxConcurrency?: number | null };
     account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
   };
 }) {
-  return await proxyChannelCoordinator.acquireChannelLease({
+  const channelLeaseResult = await proxyChannelCoordinator.acquireChannelLease({
     // Only session-addressable requests should consume the guarded per-channel
     // lease pool. Requests without a stable downstream session key should keep
     // the pre-sticky-session parallel behavior instead of contending globally.
@@ -173,6 +175,11 @@ export async function acquireSurfaceChannelLease(input: {
     accountExtraConfig: input.selected.account?.extraConfig,
     accountOauthProvider: input.selected.account?.oauthProvider,
   });
+  if (channelLeaseResult.status === 'timeout') {
+    return { ...channelLeaseResult, scope: 'channel' as const };
+  }
+
+  return channelLeaseResult;
 }
 
 export function buildSurfaceChannelBusyMessage(waitMs: number): string {
@@ -193,6 +200,54 @@ export function deriveUpstreamEndpointFromPath(upstreamPath: string | null | und
   if (path.includes('/v1/responses') || path.includes('/responses')) return 'responses';
   if (path.includes('/v1/chat/completions') || path.includes('chat/completions') || path.includes('/chat/')) return 'chat';
   return null;
+}
+
+export function buildSurfaceConcurrencyBusyMessage(scope: 'channel' | 'site', waitMs: number): string {
+  if (scope === 'site') {
+    return waitMs > 0
+      ? `Site busy: waited ${waitMs}ms for an available concurrency slot`
+      : 'Site busy: no concurrency slot available';
+  }
+  return buildSurfaceChannelBusyMessage(waitMs);
+}
+
+type SurfaceSiteRequest = Parameters<typeof runWithSiteApiEndpointPool>[0];
+
+/** 统一处理站点 API 地址池和站点并发租约，供各协议 surface 复用。 */
+export async function runWithSurfaceSiteConcurrency<T>(
+  site: SurfaceSiteRequest,
+  operation: (siteBaseUrl: string) => Promise<T>,
+): Promise<T> {
+  // 即使站点不限制并发，也要经过地址池；这里的 0 只表示不限制租约数量。
+  return runWithSiteApiEndpointPool(site, (target) => operation(target.baseUrl));
+}
+
+export function getSurfaceRequestFailure(error: unknown): {
+  status: number;
+  message: string;
+  isSiteConcurrencyBusy: boolean;
+} {
+  const endpointError = error as {
+    name?: unknown;
+    status?: unknown;
+    rawErrText?: unknown;
+    siteConcurrencyTimeout?: unknown;
+  } | null;
+  const isEndpointError = (
+    error instanceof SiteApiEndpointRequestError
+    || (typeof error === 'object' && error !== null && endpointError?.name === 'SiteApiEndpointRequestError')
+  );
+  const status = isEndpointError && typeof endpointError?.status === 'number'
+    ? endpointError.status
+    : 502;
+  const message = typeof endpointError?.rawErrText === 'string' && endpointError.rawErrText.trim()
+    ? endpointError.rawErrText
+    : (error instanceof Error ? error.message : 'Upstream request failed');
+  return {
+    status,
+    message,
+    isSiteConcurrencyBusy: endpointError?.siteConcurrencyTimeout === true,
+  };
 }
 
 export async function writeSurfaceProxyLog(input: {
