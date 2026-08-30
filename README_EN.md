@@ -92,6 +92,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 - [Veloera](https://github.com/Veloera/Veloera)
 - [AnyRouter](https://anyrouter.top) — Universal routing platform
 - [Sub2API](https://github.com/Wei-Shaw/sub2api) — Subscription-based relay
+- [OrcaRouter](https://www.orcarouter.ai) — OpenAI-compatible gateway with built-in agent security
 
 | Pain Point | How Metapi Solves It |
 | --- | --- |
@@ -219,8 +220,9 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 | **Veloera** | `veloera` | API gateway platform |
 | **AnyRouter** | `anyrouter` | Universal routing platform |
 | **Sub2API** | `sub2api` | Subscription-based relay |
+| **OrcaRouter** | `orcarouter` | Official OpenAI-compatible gateway |
 
-Adapters cover shared capabilities such as model discovery, balance access, token management, and proxy integration; login, check-in, and user-info flows vary by platform.
+Adapters cover shared capabilities such as model discovery and proxy integration; balance access and token management are available only where the upstream exposes those APIs (OrcaRouter currently does not); login, check-in, and user-info flows vary by platform.
 
 ### Account & Token Management
 
