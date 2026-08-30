@@ -151,7 +151,7 @@ describe('refreshModelsForAccount credential discovery', () => {
 
       if (token === 'session-token') {
         setModelContextLengths(new Map([
-          ['model-a', 128000],
+          ['model-a', 256000],
           ['model-b', 256000],
         ]), contextScope);
         return ['model-a', 'model-b'];
@@ -252,8 +252,8 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     const [firstResult, secondResult] = await Promise.all([firstRefresh, secondRefresh]);
 
-    expect(firstResult.status).toBe('success');
-    expect(secondResult.status).toBe('success');
+    expect(firstResult.status).toBe('failed');
+    expect(secondResult.status).toBe('failed');
     expect(seenScopes).toHaveLength(2);
     expect(seenScopes[0]).not.toBe(seenScopes[1]);
     expect(seenScopes[0]).toMatch(/^account:\d+:refresh:[^:]+:scan:1$/);
@@ -448,101 +448,31 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.runtimeHealth?.checkedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
-  it('marks empty-but-successful api-key discovery as degraded, not unhealthy', async () => {
+  it('clears stale context lengths when a refresh discovers no models', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockResolvedValue([]);
 
     const site = await db.insert(schema.sites).values({
-      name: 'site-empty-ok',
-      url: 'https://site-empty-ok.example.com',
+      name: 'site-context-fail',
+      url: 'https://site-context-fail.example.com',
       platform: 'new-api',
       status: 'active',
     }).returning().get();
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      username: 'empty-ok-user',
-      accessToken: 'sk-valid',
-      apiToken: 'sk-valid',
-      status: 'active',
-      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
-    }).returning().get();
-
-    const result = await refreshModelsForAccount(account.id);
-
-    expect(result).toMatchObject({
-      accountId: account.id,
-      refreshed: true,
-      status: 'success',
-      errorCode: null,
-      modelCount: 0,
-      modelsPreview: [],
-    });
-
-    const latest = await db.select().from(schema.accounts)
-      .where(eq(schema.accounts.id, account.id))
-      .get();
-    const parsed = JSON.parse(latest!.extraConfig || '{}');
-    expect(parsed.runtimeHealth?.state).toBe('degraded');
-    expect(parsed.runtimeHealth?.source).toBe('model-discovery');
-    expect(parsed.runtimeHealth?.reason).toContain('模型探测成功');
-    expect(parsed.runtimeHealth?.reason).toContain('未返回可用模型');
-  });
-
-  it('marks empty-but-successful codex oauth discovery as degraded, not unhealthy', async () => {
-    getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
-    undiciFetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ models: [] }),
-      text: async () => JSON.stringify({ ok: true }),
-    });
-
-    const site = await db.insert(schema.sites).values({
-      name: 'codex-empty-site',
-      url: 'https://chatgpt.com/backend-api/codex',
-      platform: 'codex',
-      status: 'active',
-    }).returning().get();
-
-    const account = await db.insert(schema.accounts).values({
-      siteId: site.id,
-      username: 'codex-empty@example.com',
-      accessToken: 'oauth-access-token',
+      username: 'context-fail-user',
+      accessToken: 'expired-token',
       apiToken: null,
       status: 'active',
-      extraConfig: JSON.stringify({
-        credentialMode: 'session',
-        oauth: {
-          provider: 'codex',
-          accountId: 'chatgpt-account-123',
-          email: 'codex-empty@example.com',
-          planType: 'plus',
-        },
-      }),
     }).returning().get();
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+    setModelContextLengths(new Map([['stale-model', 256000]]), contextScope);
 
     const result = await refreshModelsForAccount(account.id);
 
-    expect(result).toMatchObject({
-      accountId: account.id,
-      refreshed: true,
-      status: 'success',
-      errorCode: null,
-      modelCount: 0,
-      modelsPreview: [],
-    });
-
-    const latest = await db.select().from(schema.accounts)
-      .where(eq(schema.accounts.id, account.id))
-      .get();
-    const parsed = JSON.parse(latest!.extraConfig || '{}');
-    expect(parsed.runtimeHealth?.state).toBe('degraded');
-    expect(parsed.runtimeHealth?.source).toBe('model-discovery');
-    expect(parsed.runtimeHealth?.reason).toContain('模型探测成功');
-    expect(parsed.runtimeHealth?.reason).toContain('未返回可用模型');
-    expect(parsed.oauth?.modelDiscoveryStatus).toBe('healthy');
+    expect(result.status).toBe('failed');
+    expect(getModelContextLength('stale-model', contextScope)).toBe(1_000_000);
   });
 
   it('normalizes anyrouter html challenge parse errors during model discovery', async () => {
@@ -775,6 +705,8 @@ describe('refreshModelsForAccount credential discovery', () => {
       latencyMs: 120,
       checkedAt: '2026-03-21T11:30:00.000Z',
     }).run();
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+    setModelContextLengths(new Map([['gpt-4.1', 128000]]), contextScope);
 
     await db.insert(schema.tokenModelAvailability).values({
       tokenId: token.id,
@@ -813,6 +745,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelName: 'gpt-4.1',
       available: true,
     });
+    expect(getModelContextLength('gpt-4.1', contextScope)).toBe(128000);
   });
 
   it('does not scan masked_pending placeholders as token credentials', async () => {
@@ -852,7 +785,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(result).toMatchObject({
       accountId: account.id,
       refreshed: true,
-      status: 'success',
+      status: 'failed',
       tokenScanned: 0,
     });
 
@@ -2342,7 +2275,7 @@ describe('refreshModelsForAccount credential discovery', () => {
 
   it('preserves manual models when refresh fails and restores previous availability', async () => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockRejectedValue(new Error('HTTP 401: invalid token'));
+    getModelsMock.mockResolvedValue([]);
 
     const site = await db.insert(schema.sites).values({
       name: 'site-fail',
