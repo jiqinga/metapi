@@ -7,6 +7,7 @@ type DbModule = typeof import('../../db/index.js');
 
 describe('oauth site registry', () => {
   let db: DbModule['db'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let schema: DbModule['schema'];
   let dataDir = '';
 
@@ -16,6 +17,7 @@ describe('oauth site registry', () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     db = dbModule.db;
+    closeDbConnections = dbModule.closeDbConnections;
     schema = dbModule.schema;
   });
 
@@ -23,9 +25,10 @@ describe('oauth site registry', () => {
     await db.delete(schema.sites).run();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     delete process.env.DATA_DIR;
     if (dataDir) {
+      await closeDbConnections();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });

@@ -9,7 +9,7 @@ import { SocksClient } from 'socks';
 import type { Dispatcher, RequestInit as UndiciRequestInit } from 'undici';
 import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { mergeHeadersWithSiteCustomHeaders, type SiteCustomHeadersMergePriority } from './siteCustomHeaders.js';
-import { resolveProxyUrlFromExtraConfig } from './accountExtraConfig.js';
+import { resolveProxyUrlFromExtraConfig, getCustomHeadersFromExtraConfig, getCustomHeadersOverrideRequestHeadersFromExtraConfig } from './accountExtraConfig.js';
 import { stripTrailingSlashes } from './urlNormalization.js';
 
 const SITE_PROXY_CACHE_TTL_MS = 3_000;
@@ -71,6 +71,33 @@ let siteProxyCache: {
 };
 
 const dispatcherCache = new Map<string, Dispatcher>();
+const MAX_DISPATCHER_CACHE_SIZE = 32;
+
+function destroyDispatcher(dispatcher: Dispatcher): void {
+  // Gracefully drain in-flight requests, then release pooled sockets. Falls
+  // back to a forceful destroy if close() is unavailable or throws.
+  void Promise.resolve()
+    .then(() => ((dispatcher as { close?: () => Promise<void> }).close?.()
+      ?? (dispatcher as { destroy?: () => Promise<void> }).destroy?.()))
+    .catch(() => {
+      try { (dispatcher as { destroy?: () => void }).destroy?.(); } catch { /* ignore */ }
+    });
+}
+
+function setDispatcherCache(key: string, dispatcher: Dispatcher): void {
+  // Bounded to cap growth from per-account proxy overrides. Only called on a
+  // cache miss, so it never overwrites (nor destroys) a dispatcher an in-flight
+  // request may still hold. Oldest entry is evicted and drained on overflow.
+  if (dispatcherCache.size >= MAX_DISPATCHER_CACHE_SIZE) {
+    const oldestKey = dispatcherCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      const evicted = dispatcherCache.get(oldestKey);
+      dispatcherCache.delete(oldestKey);
+      if (evicted) destroyDispatcher(evicted);
+    }
+  }
+  dispatcherCache.set(key, dispatcher);
+}
 
 const accountProxyOverride = new AsyncLocalStorage<string | null>();
 
@@ -169,13 +196,19 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
   return siteProxyCache.rows;
 }
 
-function getDispatcherByProxyUrl(proxyUrl: string, skipCache = false): Dispatcher | undefined {
+function getDispatcherByProxyUrl(proxyUrl: string, _skipCache = false): Dispatcher | undefined {
   const normalized = normalizeSiteProxyUrl(proxyUrl);
   if (!normalized) return undefined;
 
-  if (!skipCache) {
-    const cached = dispatcherCache.get(normalized);
-    if (cached) return cached;
+  // Always reuse by normalized proxy URL (credentials are part of the key).
+  // Account-override dispatchers previously bypassed the cache and were
+  // recreated — and never destroyed — on every request, leaking a connection
+  // pool each time. Reusing them is correct (same proxy target) and leak-free.
+  const cached = dispatcherCache.get(normalized);
+  if (cached) {
+    dispatcherCache.delete(normalized);
+    dispatcherCache.set(normalized, cached); // LRU recency touch
+    return cached;
   }
 
   try {
@@ -183,9 +216,7 @@ function getDispatcherByProxyUrl(proxyUrl: string, skipCache = false): Dispatche
     const dispatcher = SOCKS_PROXY_PROTOCOLS.has(parsedProxyUrl.protocol.toLowerCase())
       ? createSocksDispatcher(parsedProxyUrl)
       : new ProxyAgent(normalized);
-    if (!skipCache) {
-      dispatcherCache.set(normalized, dispatcher);
-    }
+    setDispatcherCache(normalized, dispatcher);
     return dispatcher;
   } catch {
     return undefined;
@@ -364,6 +395,12 @@ export function parseSiteProxyUrlInput(input: unknown): ParsedSiteProxyInput {
 
 export function invalidateSiteProxyCache(): void {
   siteProxyCache = { loadedAt: 0, rows: [], systemProxyUrl: null };
+  // Drain and release cached proxy dispatchers so a changed proxy setting is
+  // not served from a stale ProxyAgent, and pooled sockets don't leak.
+  for (const dispatcher of dispatcherCache.values()) {
+    destroyDispatcher(dispatcher);
+  }
+  dispatcherCache.clear();
 }
 
 function findBestMatchingSiteRow(rows: SiteProxyRow[], normalizedRequestUrl: string): SiteProxyRow | null {
@@ -482,13 +519,25 @@ export function withSiteRecordProxyRequestInit(
   site: SiteProxyConfigLike | null | undefined,
   options?: UndiciRequestInit,
   accountProxyUrl?: string | null,
+  accountExtraConfig?: string | null,
 ): UndiciRequestInit {
   const nextOptions: UndiciRequestInit = {
     ...(options || {}),
   };
-  const mergedHeaders = mergeHeadersWithSiteCustomHeaders(site?.customHeaders, options?.headers, {
+  const siteMergedHeaders = mergeHeadersWithSiteCustomHeaders(site?.customHeaders, options?.headers, {
     priority: resolveSiteCustomHeadersMergePriority(site),
   });
+  // Account headers are applied last, so their own override flag decides whether they win
+  // over what is already set (forwarded request headers or site headers).
+  const mergedHeaders = mergeHeadersWithSiteCustomHeaders(
+    getCustomHeadersFromExtraConfig(accountExtraConfig),
+    siteMergedHeaders,
+    {
+      priority: getCustomHeadersOverrideRequestHeadersFromExtraConfig(accountExtraConfig)
+        ? 'site'
+        : 'request',
+    },
+  );
   if (mergedHeaders) {
     nextOptions.headers = mergedHeaders;
   }

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api } from "../api.js";
+import { api, type AccountModelUsageRow } from "../api.js";
 import CenteredModal from "../components/CenteredModal.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import ResponsiveFormGrid from "../components/ResponsiveFormGrid.js";
@@ -26,7 +26,7 @@ import {
   clearFocusParams,
   readFocusAccountIntent,
 } from "./helpers/navigationFocus.js";
-import { TokensPanel } from "./Tokens.js";
+import { TokensPanel } from "./accounts/TokensPanel.js";
 import { tr } from "../i18n.js";
 import {
   buildCustomReorderUpdates,
@@ -34,9 +34,24 @@ import {
   type SortMode,
 } from "./helpers/listSorting.js";
 import { shouldIgnoreRowSelectionClick } from "./helpers/rowSelection.js";
+import {
+  emptySiteCustomHeader,
+  serializeSiteCustomHeaders,
+  type SiteCustomHeaderField,
+} from "./helpers/sitesEditor.js";
 import { SITE_DOCS_URL } from "../docsLink.js";
 import { getSiteInitializationPreset } from "../../shared/siteInitializationPresets.js";
 import { parseBatchApiKeys } from "../../shared/apiKeyBatch.js";
+import {
+  formatAvailabilityPercent,
+  getAvailabilityColor,
+  formatAvailabilityBucketLabel,
+  formatRelativeTime,
+  parseAvailabilityBucketStart,
+  parseAvailabilityBucketLabel,
+  padDateTimeSegment,
+  type AvailabilitySummary,
+} from "../components/availabilityUtils.js";
 
 type ConnectionsSegment = "session" | "apikey" | "tokens";
 
@@ -71,6 +86,9 @@ const ACCOUNT_SEGMENTS: Array<{
 ];
 
 const SITE_SELECT_SEARCH_PLACEHOLDER = "筛选站点（名称 / 平台 / URL）";
+
+const ACCOUNT_PAGE_SIZES = [20, 50, 100];
+const ACCOUNT_DEFAULT_PAGE_SIZE = 50;
 
 function createLoginForm() {
   return { siteId: 0, username: "", password: "" };
@@ -115,6 +133,15 @@ export default function Accounts() {
   const [sites, setSites] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("custom");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchCommitted, setSearchCommitted] = useState("");
+  const [siteFilter, setSiteFilter] = useState(0);
+  const [siteFilterCommitted, setSiteFilterCommitted] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilterCommitted, setStatusFilterCommitted] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(ACCOUNT_DEFAULT_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [highlightAccountId, setHighlightAccountId] = useState<number | null>(
     null,
   );
@@ -157,6 +184,10 @@ export default function Accounts() {
     refreshToken: "",
     tokenExpiresAt: "",
     proxyUrl: "",
+    claudeCodeCloak: "inherit",
+    codexCloak: "inherit",
+    customHeaders: [emptySiteCustomHeader()] as SiteCustomHeaderField[],
+    customHeadersOverrideRequestHeaders: false,
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [rebindTarget, setRebindTarget] = useState<any | null>(null);
@@ -172,25 +203,42 @@ export default function Accounts() {
       latencyMs: number | null;
       disabled: boolean;
       isManual?: boolean;
+      protocols?: string[];
+      manualProtocols?: string[] | null;
+      effectiveProtocols?: string[];
     }>;
     pendingDisabled: Set<string>;
+    siteDisabledModels: Set<string>;
     loading: boolean;
     saving: boolean;
     siteName: string;
     manualModelsInput: string;
     addingManualModels: boolean;
+    pendingProtocolOverrides: Map<string, string[] | null>;
+    expandedProtocolModel: string | null;
+    savingProtocols: boolean;
   }>({
     open: false,
     account: null,
     models: [],
     pendingDisabled: new Set(),
+    siteDisabledModels: new Set(),
     loading: false,
     saving: false,
     siteName: "",
     manualModelsInput: "",
     addingManualModels: false,
+    pendingProtocolOverrides: new Map(),
+    expandedProtocolModel: null,
+    savingProtocols: false,
   });
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+  const [availabilityModal, setAvailabilityModal] = useState<any | null>(null);
+  const [modelUsageRows, setModelUsageRows] = useState<AccountModelUsageRow[] | null>(null);
+  const [modelUsageLoading, setModelUsageLoading] = useState(false);
+  const [modelUsageError, setModelUsageError] = useState<string | null>(null);
+  const [modelUsageAccountId, setModelUsageAccountId] = useState<number | null>(null);
+  const [modelUsageWindowStart, setModelUsageWindowStart] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
   const modelModalRequestSeqRef = useRef(0);
@@ -200,21 +248,38 @@ export default function Accounts() {
   const isRebindSub2Api =
     (activeRebindTarget?.site?.platform || "").toLowerCase() === "sub2api";
 
-  const load = async (forceRefresh = false) => {
+  const load = async (_forceRefresh = false) => {
     try {
-      const snapshot = await api.getAccountsSnapshot(
-        forceRefresh ? { refresh: true } : undefined,
-      );
-      const nextAccounts = Array.isArray(snapshot?.accounts)
-        ? snapshot.accounts
-        : [];
-      const nextSites = Array.isArray(snapshot?.sites) ? snapshot.sites : [];
+      if (activeSegment === "tokens") {
+        setAccounts([]);
+        setTotal(0);
+        if (sites.length === 0) {
+          const siteRows = await api.getSites();
+          setSites(siteRows || []);
+        }
+        return;
+      }
+      const segmentParam =
+        activeSegment === "apikey" || activeSegment === "session"
+          ? activeSegment
+          : undefined;
+      const result = await api.getAccountsQuery({
+        search: searchCommitted || undefined,
+        segment: segmentParam,
+        siteId: siteFilterCommitted || undefined,
+        status: statusFilterCommitted || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      });
+      const nextAccounts = Array.isArray(result?.items) ? result.items : [];
       setAccounts(nextAccounts);
-      setSites(nextSites);
+      setTotal(result?.total || 0);
+      if (sites.length === 0) {
+        const siteRows = await api.getSites();
+        setSites(siteRows || []);
+      }
       setSelectedAccountIds((current) =>
-        current.filter((id) =>
-          nextAccounts.some((account: any) => account.id === id),
-        ),
+        current.filter((id) => nextAccounts.some((account: any) => account.id === id)),
       );
     } catch (error: any) {
       toast.error(error?.message || "加载账号列表失败");
@@ -224,7 +289,50 @@ export default function Accounts() {
   };
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchCommitted, siteFilterCommitted, statusFilterCommitted, page, pageSize, activeSegment]);
+
+  const commitSearch = () => {
+    setPage(1);
+    setSearchCommitted(searchInput.trim());
+    setSiteFilterCommitted(siteFilter);
+    setStatusFilterCommitted(statusFilter);
+  };
+
+  useEffect(() => {
+    if (!availabilityModal) {
+      setModelUsageRows(null);
+      setModelUsageError(null);
+      setModelUsageLoading(false);
+      setModelUsageAccountId(null);
+      setModelUsageWindowStart(null);
+      return;
+    }
+    const accountId = availabilityModal?.account?.id;
+    if (!accountId) return;
+    let cancelled = false;
+    setModelUsageLoading(true);
+    setModelUsageError(null);
+    setModelUsageAccountId(accountId);
+    setModelUsageWindowStart(null);
+    api
+      .getAccountModelUsage(accountId)
+      .then((res) => {
+        if (cancelled) return;
+        setModelUsageRows(res?.models ?? []);
+        setModelUsageWindowStart(typeof res?.windowStartUtc === "string" ? res.windowStartUtc : null);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setModelUsageError(err?.message || "加载模型明细失败");
+      })
+      .finally(() => {
+        if (!cancelled) setModelUsageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [availabilityModal]);
 
   const selectedTokenSite = useMemo(
     () => sites.find((item) => item.id === tokenForm.siteId) || null,
@@ -250,6 +358,23 @@ export default function Accounts() {
     ],
     [sites],
   );
+  const siteFilterOptions = useMemo(
+    () => [
+      { value: "0", label: "全部站点" },
+      ...sites.map((site: any) => ({
+        value: String(site.id),
+        label: site.name,
+        description: site.platform || undefined,
+      })),
+    ],
+    [sites],
+  );
+  const statusFilterOptions = [
+    { value: "", label: "全部状态" },
+    { value: "active", label: "正常" },
+    { value: "disabled", label: "已禁用" },
+    { value: "expired", label: "已过期" },
+  ];
   const isSub2ApiSelected =
     (selectedTokenSite?.platform || "").toLowerCase() === "sub2api";
   const activeAddCredentialMode =
@@ -297,13 +422,28 @@ export default function Accounts() {
   );
   const visibleAccounts = useMemo(() => {
     if (activeSegment === "tokens") return [];
-    return sortedAccounts.filter(
-      (account) => resolveAccountCredentialMode(account) === activeSegment,
-    );
+    return sortedAccounts;
   }, [activeSegment, sortedAccounts]);
+  const filteredAccounts = visibleAccounts;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const displayedStart = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const displayedEnd = total === 0
+    ? 0
+    : Math.min((safePage - 1) * pageSize + accounts.length, total);
+  const pageNumbers = useMemo(
+    () =>
+      Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+        if (totalPages <= 7) return i + 1;
+        if (safePage <= 4) return i + 1;
+        if (safePage >= totalPages - 3) return totalPages - 6 + i;
+        return safePage - 3 + i;
+      }),
+    [safePage, totalPages],
+  );
   const allVisibleAccountsSelected =
-    visibleAccounts.length > 0 &&
-    visibleAccounts.every((account) => selectedAccountIds.includes(account.id));
+    filteredAccounts.length > 0 &&
+    filteredAccounts.every((account) => selectedAccountIds.includes(account.id));
   const verifyFailureHint = buildVerifyFailureHint(verifyResult);
   const addAccountPrereqHint = buildAddAccountPrereqHint(verifyResult);
 
@@ -373,6 +513,30 @@ export default function Accounts() {
       { replace: true },
     );
   }, [activeSegment, loaded, location.pathname, location.search, navigate]);
+
+  // When arriving from the Sites page via /accounts?siteId=X (without create=1),
+  // pre-apply the site filter so the user sees that site's connections.
+  useEffect(() => {
+    if (!loaded) return;
+    const params = new URLSearchParams(location.search);
+    if (isTruthyFlag(params.get("create"))) return; // create flow handled above
+    const requestedSiteId = parsePositiveInt(params.get("siteId"));
+    if (!requestedSiteId) return;
+
+    setSiteFilter(requestedSiteId);
+    setSiteFilterCommitted(requestedSiteId);
+    setPage(1);
+
+    params.delete("siteId");
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : "",
+      },
+      { replace: true },
+    );
+  }, [loaded, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     return () => {
@@ -604,15 +768,23 @@ export default function Accounts() {
 
   const applyLoadedModelModal = (account: any, result: any) => {
     const models = Array.isArray(result?.models) ? result.models : [];
-    const disabledSet = new Set<string>(
-      models.filter((m: any) => m.disabled).map((m: any) => m.name as string),
-    );
+    // pendingDisabled tracks the connection-level list; site-wide disabled
+    // models are shown read-only and cannot be toggled from this modal.
+    const accountDisabled = Array.isArray(result?.accountDisabledModels)
+      ? (result.accountDisabledModels as string[])
+      : models.filter((m: any) => m.disabled).map((m: any) => m.name as string);
+    const siteDisabled = Array.isArray(result?.siteDisabledModels)
+      ? (result.siteDisabledModels as string[])
+      : [];
     setModelModal((s) => ({
       ...s,
       loading: false,
       models,
-      pendingDisabled: disabledSet,
+      pendingDisabled: new Set<string>(accountDisabled),
+      siteDisabledModels: new Set<string>(siteDisabled),
       siteName: result?.siteName || account.site?.name || s.siteName,
+      pendingProtocolOverrides: new Map(),
+      expandedProtocolModel: null,
     }));
   };
 
@@ -636,8 +808,11 @@ export default function Accounts() {
         ? {
             models: [],
             pendingDisabled: new Set<string>(),
+            siteDisabledModels: new Set<string>(),
             siteName: "",
             manualModelsInput: "",
+            pendingProtocolOverrides: new Map<string, string[] | null>(),
+            expandedProtocolModel: null,
           }
         : {}),
     }));
@@ -678,6 +853,8 @@ export default function Accounts() {
       account: null,
       manualModelsInput: "",
       addingManualModels: false,
+      pendingProtocolOverrides: new Map(),
+      expandedProtocolModel: null,
     }));
   };
 
@@ -692,24 +869,101 @@ export default function Accounts() {
 
   const saveModelDisabled = async () => {
     if (!modelModal.account) return;
-    const siteId = modelModal.account.siteId;
+    const accountId = modelModal.account.id;
+    if (!accountId || Number.isNaN(Number(accountId))) {
+      toast.error("无法获取连接信息，请刷新页面后重试");
+      return;
+    }
     setModelModal((s) => ({ ...s, saving: true }));
     try {
-      await api.updateSiteDisabledModels(
-        siteId,
+      // Connection-level disable: only this account is affected. Site-wide
+      // disabled models stay managed from the site settings.
+      await api.updateAccountDisabledModels(
+        Number(accountId),
         Array.from(modelModal.pendingDisabled),
       );
-      try {
-        await api.rebuildRoutes(false, false);
-        toast.success("模型禁用设置已保存，路由已重建");
-      } catch {
-        toast.error("模型禁用设置已保存，但路由重建失败，请手动刷新路由");
-      }
+      toast.success("模型禁用设置已保存，仅对当前连接生效");
       closeModelModal();
     } catch (e: any) {
       toast.error(e.message || "保存失败");
     } finally {
       setModelModal((s) => ({ ...s, saving: false }));
+    }
+  };
+
+  const toggleProtocolEditor = (modelName: string) => {
+    setModelModal((s) => ({
+      ...s,
+      expandedProtocolModel: s.expandedProtocolModel === modelName ? null : modelName,
+    }));
+  };
+
+  const toggleProtocolOverride = (modelName: string, protocol: string) => {
+    setModelModal((s) => {
+      const next = new Map(s.pendingProtocolOverrides);
+      const currentPending = next.has(modelName)
+        ? next.get(modelName)
+        : (s.models.find((m) => m.name === modelName)?.manualProtocols ?? null);
+      let protocols: string[];
+      if (currentPending == null) {
+        // null = starting from auto; undefined shouldn't happen here but treat as null
+        const auto = s.models.find((m) => m.name === modelName)?.protocols ?? [];
+        protocols = auto.includes(protocol)
+          ? auto.filter((p) => p !== protocol)
+          : [...auto, protocol];
+      } else {
+        protocols = currentPending.includes(protocol)
+          ? currentPending.filter((p) => p !== protocol)
+          : [...currentPending, protocol];
+      }
+      if (protocols.length === 0) {
+        next.set(modelName, null);
+      } else {
+        const order = ["chat", "messages", "responses"];
+        next.set(modelName, order.filter((p) => protocols.includes(p)));
+      }
+      return { ...s, pendingProtocolOverrides: next };
+    });
+  };
+
+  const resetProtocolOverride = (modelName: string) => {
+    setModelModal((s) => {
+      const next = new Map(s.pendingProtocolOverrides);
+      next.set(modelName, null);
+      return { ...s, pendingProtocolOverrides: next };
+    });
+  };
+
+  const saveProtocolOverrides = async () => {
+    if (!modelModal.account) return;
+    const siteId = modelModal.account.siteId;
+    if (!siteId || Number.isNaN(Number(siteId))) {
+      toast.error("无法获取站点信息，请刷新页面后重试");
+      return;
+    }
+    setModelModal((s) => ({ ...s, savingProtocols: true }));
+    try {
+      const overrides: Array<{ modelName: string; protocols: string[] }> = [];
+      for (const [modelName, protocols] of modelModal.pendingProtocolOverrides) {
+        if (protocols && protocols.length > 0) {
+          overrides.push({ modelName, protocols });
+        }
+      }
+      await api.updateSiteModelProtocolOverrides(siteId, overrides);
+      setModelModal((s) => ({
+        ...s,
+        pendingProtocolOverrides: new Map(),
+        expandedProtocolModel: null,
+      }));
+      try {
+        await api.rebuildRoutes(false, false);
+      } catch {}
+      await loadModelModalModels(modelModal.account, {});
+      toast.success("协议设置已保存");
+    } catch (e: any) {
+      toast.error(e.message || "保存协议设置失败");
+    } finally {
+      setModelModal((s) => ({ ...s, savingProtocols: false }));
     }
   };
 
@@ -812,7 +1066,7 @@ export default function Accounts() {
         ? "disabled"
         : !capabilities.proxyOnly && account.status === "expired"
           ? "unhealthy"
-          : "unknown";
+          : "healthy";
     const state = account.runtimeHealth?.state || fallbackState;
     const cfg = runtimeHealthMap[state] || runtimeHealthMap.unknown;
     const reason =
@@ -821,8 +1075,118 @@ export default function Accounts() {
         ? "账号或站点已禁用"
         : state === "unhealthy"
           ? "最近健康检查失败"
-          : "尚未获取运行健康信息");
+          : state === "healthy"
+            ? "运行正常"
+            : "尚未获取运行健康信息");
     return { state, reason, ...cfg };
+  };
+
+  const renderAvailabilityCell = (account: any) => {
+    const availability: AvailabilitySummary | null | undefined =
+      account?.availability;
+    const lastCallAt: string | null | undefined = account?.lastCallAt;
+    const hasData =
+      availability && typeof availability.totalRequests === "number"
+        ? availability.totalRequests > 0
+        : false;
+    const percent = availability?.availabilityPercent ?? null;
+    const tooltipLines: string[] = [];
+    if (availability) {
+      tooltipLines.push(
+        `总请求：${availability.totalRequests}`,
+        `成功/失败：${availability.successCount}/${availability.failedCount}`,
+      );
+      if (availability.averageLatencyMs != null) {
+        tooltipLines.push(`平均响应：${availability.averageLatencyMs}ms`);
+      }
+      if (lastCallAt) {
+        tooltipLines.push(`最近调用：${formatRelativeTime(lastCallAt)}`);
+      }
+    } else if (lastCallAt) {
+      tooltipLines.push(`最近调用：${formatRelativeTime(lastCallAt)}`);
+    }
+    const tooltip = tooltipLines.join(" · ");
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          position: "relative",
+          cursor: hasData ? "pointer" : "default",
+        }}
+        onClick={() => {
+          if (!hasData) return;
+          setAvailabilityModal({
+            account,
+            availability,
+            lastCallAt,
+          });
+        }}
+        data-tooltip={hasData ? "点击查看详情" : tooltip || undefined}
+      >
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color:
+              hasData
+                ? getAvailabilityColor(percent)
+                : "var(--color-text-muted)",
+          }}
+        >
+          {hasData ? formatAvailabilityPercent(percent) : "—"}
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            color: "var(--color-text-muted)",
+          }}
+        >
+          {lastCallAt ? formatRelativeTime(lastCallAt) : "无调用记录"}
+        </span>
+        {availability && availability.buckets.length > 0 && (
+          <div
+            className="site-availability-strip-compact"
+            style={{ marginTop: 2 }}
+          >
+            {availability.buckets.map((bucket, index) => (
+              <span
+                key={`${account?.id}-${index}`}
+                className="site-availability-cell"
+                style={{
+                  background: getAvailabilityColor(
+                    bucket.totalRequests > 0
+                      ? bucket.availabilityPercent
+                      : null,
+                  ),
+                  opacity: bucket.totalRequests > 0 ? 1 : 0.3,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const openProxyLogsForModel = (
+    accountId: number,
+    modelName: string,
+    status: "all" | "success" | "failed",
+  ) => {
+    const params = new URLSearchParams();
+    params.set("accountId", String(accountId));
+    if (modelName && modelName !== "unknown") params.set("q", modelName);
+    if (status !== "all") params.set("status", status);
+    if (modelUsageWindowStart) {
+      // windowStartUtc is a UTC SQL datetime like "2026-08-24 16:00:00";
+      // convert to ISO 8601 UTC for the proxy-logs `from` filter.
+      const iso = `${modelUsageWindowStart.replace(" ", "T")}Z`;
+      const parsed = new Date(iso);
+      if (!Number.isNaN(parsed.getTime())) params.set("from", parsed.toISOString());
+    }
+    navigate(`/logs?${params.toString()}`);
   };
 
   const resolveAccountCapabilities = (account: any) => {
@@ -934,9 +1298,67 @@ export default function Accounts() {
     };
   };
 
+  const cloakFormValue = (value: unknown) =>
+    typeof value === "boolean" ? (value ? "on" : "off") : "inherit";
+
+  const customHeaderRowsFromExtraConfig = (
+    raw: unknown,
+  ): SiteCustomHeaderField[] => {
+    const source =
+      typeof raw === "string"
+        ? (() => {
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return null;
+            }
+          })()
+        : raw;
+    const rows =
+      source && typeof source === "object" && !Array.isArray(source)
+        ? Object.entries(source as Record<string, unknown>)
+            .filter(([key, value]) => key.trim() && typeof value === "string")
+            .map(([key, value]) => ({ key, value: value as string }))
+        : [];
+    return rows.length > 0 ? rows : [emptySiteCustomHeader()];
+  };
+
+  const updateEditCustomHeaderRow = (
+    index: number,
+    field: "key" | "value",
+    value: string,
+  ) => {
+    setEditForm((prev) => ({
+      ...prev,
+      customHeaders: prev.customHeaders.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    }));
+  };
+
+  const addEditCustomHeaderRow = () => {
+    setEditForm((prev) => ({
+      ...prev,
+      customHeaders: [...prev.customHeaders, emptySiteCustomHeader()],
+    }));
+  };
+
+  const removeEditCustomHeaderRow = (index: number) => {
+    setEditForm((prev) => {
+      const next = prev.customHeaders.filter(
+        (_, itemIndex) => itemIndex !== index,
+      );
+      return {
+        ...prev,
+        customHeaders: next.length > 0 ? next : [emptySiteCustomHeader()],
+      };
+    });
+  };
+
   const openEditPanel = (account: any) => {
     const managedAuth = extractManagedSub2ApiAuth(account);
-    const proxyUrl = parseAccountExtraConfig(account)?.proxyUrl || "";
+    const extraConfig = parseAccountExtraConfig(account);
+    const proxyUrl = extraConfig?.proxyUrl || "";
     closeAddPanel();
     setRebindTarget(null);
     setEditingAccount(account);
@@ -954,6 +1376,11 @@ export default function Accounts() {
       refreshToken: managedAuth.refreshToken,
       tokenExpiresAt: managedAuth.tokenExpiresAt,
       proxyUrl,
+      claudeCodeCloak: cloakFormValue(extraConfig?.claudeCodeCloak),
+      codexCloak: cloakFormValue(extraConfig?.codexCloak),
+      customHeaders: customHeaderRowsFromExtraConfig(extraConfig?.customHeaders),
+      customHeadersOverrideRequestHeaders:
+        extraConfig?.customHeadersOverrideRequestHeaders === true,
     });
   };
 
@@ -964,6 +1391,11 @@ export default function Accounts() {
 
   const saveEditPanel = async () => {
     if (!editingAccount) return;
+    const serializedHeaders = serializeSiteCustomHeaders(editForm.customHeaders);
+    if (!serializedHeaders.valid) {
+      toast.error(serializedHeaders.error || "自定义请求头格式无效");
+      return;
+    }
     setSavingEdit(true);
     try {
       await api.updateAccount(editingAccount.id, {
@@ -981,6 +1413,11 @@ export default function Accounts() {
           ? Number.parseInt(editForm.tokenExpiresAt.trim(), 10)
           : null,
         proxyUrl: editForm.proxyUrl.trim() || null,
+        claudeCodeCloak: editForm.claudeCodeCloak,
+        codexCloak: editForm.codexCloak,
+        customHeaders: serializedHeaders.customHeaders || null,
+        customHeadersOverrideRequestHeaders:
+          editForm.customHeadersOverrideRequestHeaders,
       });
       toast.success("账号已更新");
       closeEditPanel();
@@ -1004,14 +1441,14 @@ export default function Accounts() {
     if (!checked) {
       setSelectedAccountIds((current) =>
         current.filter(
-          (id) => !visibleAccounts.some((account) => account.id === id),
+          (id) => !filteredAccounts.some((account) => account.id === id),
         ),
       );
       return;
     }
     setSelectedAccountIds((current) =>
       Array.from(
-        new Set([...current, ...visibleAccounts.map((account) => account.id)]),
+        new Set([...current, ...filteredAccounts.map((account) => account.id)]),
       ),
     );
   };
@@ -1362,8 +1799,120 @@ export default function Accounts() {
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
         mobileTitle="连接排序与操作"
+        desktopContent={
+          activeSegment !== "tokens" ? (
+            <div className="toolbar" style={{ marginBottom: 12, alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div className="toolbar-search" style={{ flex: "1 1 320px", maxWidth: "unset", minWidth: 240 }}>
+                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitSearch();
+                  }}
+                  placeholder="搜索连接（名称 / 站点 / 平台 / 状态）"
+                />
+              </div>
+              <div style={{ minWidth: 140 }}>
+                <ModernSelect
+                  size="sm"
+                  value={String(siteFilter)}
+                  onChange={(nextValue) => setSiteFilter(Number(nextValue))}
+                  options={siteFilterOptions}
+                  placeholder="全部站点"
+                />
+              </div>
+              <div style={{ minWidth: 120 }}>
+                <ModernSelect
+                  size="sm"
+                  value={statusFilter}
+                  onChange={(nextValue) => setStatusFilter(nextValue)}
+                  options={statusFilterOptions}
+                  placeholder="全部状态"
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={commitSearch}
+              >
+                搜索
+              </button>
+              {(searchInput || siteFilter > 0 || statusFilter) && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ border: "1px solid var(--color-border)" }}
+                  onClick={() => {
+                    setSearchInput("");
+                    setSiteFilter(0);
+                    setStatusFilter("");
+                    setPage(1);
+                    setSearchCommitted("");
+                    setSiteFilterCommitted(0);
+                    setStatusFilterCommitted("");
+                  }}
+                >
+                  清空
+                </button>
+              )}
+            </div>
+          ) : null
+        }
         mobileContent={
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {activeSegment !== "tokens" && (
+              <div className="toolbar-search" style={{ maxWidth: "unset" }}>
+                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitSearch();
+                  }}
+                  placeholder="搜索连接（名称 / 站点 / 平台 / 状态）"
+                />
+              </div>
+            )}
+            {activeSegment !== "tokens" && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={commitSearch}
+              >
+                搜索
+              </button>
+            )}
+            {activeSegment !== "tokens" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>
+                    筛选站点
+                  </div>
+                  <ModernSelect
+                    value={String(siteFilter)}
+                    onChange={(nextValue) => setSiteFilter(Number(nextValue))}
+                    options={siteFilterOptions}
+                    placeholder="全部站点"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>
+                    筛选状态
+                  </div>
+                  <ModernSelect
+                    value={statusFilter}
+                    onChange={(nextValue) => setStatusFilter(nextValue)}
+                    options={statusFilterOptions}
+                    placeholder="全部状态"
+                  />
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
                 排序方式
@@ -2711,6 +3260,149 @@ export default function Accounts() {
                   覆盖站点和系统代理，留空则使用站点设置。支持 http/https/socks5
                   协议。
                 </div>
+                <ModernSelect
+                  value={editForm.claudeCodeCloak}
+                  onChange={(value) =>
+                    setEditForm((prev) => ({ ...prev, claudeCodeCloak: value }))
+                  }
+                  options={[
+                    { value: "inherit", label: "Claude Code 伪装：继承全局设置" },
+                    { value: "on", label: "Claude Code 伪装：启用" },
+                    { value: "off", label: "Claude Code 伪装：关闭" },
+                  ]}
+                  placeholder="Claude Code 请求伪装"
+                />
+                <ModernSelect
+                  value={editForm.codexCloak}
+                  onChange={(value) =>
+                    setEditForm((prev) => ({ ...prev, codexCloak: value }))
+                  }
+                  options={[
+                    { value: "inherit", label: "Codex 伪装：继承全局设置" },
+                    { value: "on", label: "Codex 伪装：启用" },
+                    { value: "off", label: "Codex 伪装：关闭" },
+                  ]}
+                  placeholder="Codex 请求伪装"
+                />
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--color-text-muted)",
+                    marginTop: -4,
+                  }}
+                >
+                  对非官方 CLI 客户端，把请求改写成 Claude Code / Codex CLI 的格式。全局默认值在系统设置里配置。
+                </div>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>
+                      自定义请求头（可选）
+                    </span>
+                    <button
+                      type="button"
+                      onClick={addEditCustomHeaderRow}
+                      className="btn btn-ghost"
+                      style={{ border: "1px solid var(--color-border)" }}
+                    >
+                      + 添加请求头
+                    </button>
+                  </div>
+                  {editForm.customHeaders.map((header, index) => (
+                    <div
+                      key={`account-custom-header-${index}`}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        flexDirection: isMobile ? "column" : "row",
+                        alignItems: isMobile ? "stretch" : "center",
+                      }}
+                    >
+                      <input
+                        placeholder="Header 名称"
+                        value={header.key}
+                        onChange={(e) =>
+                          updateEditCustomHeaderRow(index, "key", e.target.value)
+                        }
+                        style={{
+                          ...inputStyle,
+                          flex: 1,
+                          fontFamily: "var(--font-mono)",
+                        }}
+                      />
+                      <input
+                        placeholder="Header 值"
+                        value={header.value}
+                        onChange={(e) =>
+                          updateEditCustomHeaderRow(
+                            index,
+                            "value",
+                            e.target.value,
+                          )
+                        }
+                        style={{
+                          ...inputStyle,
+                          flex: 1,
+                          fontFamily: "var(--font-mono)",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeEditCustomHeaderRow(index)}
+                        className="btn btn-link btn-link-danger"
+                        style={isMobile ? { alignSelf: "flex-end" } : undefined}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      fontSize: 13,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editForm.customHeadersOverrideRequestHeaders}
+                      onChange={(e) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          customHeadersOverrideRequestHeaders: e.target.checked,
+                        }))
+                      }
+                      style={{ marginTop: 2 }}
+                    />
+                    <span
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                      }}
+                    >
+                      <span>允许连接自定义请求头覆盖同名出站请求头</span>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "var(--color-text-muted)",
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        连接请求头在站点请求头之后应用。开启时覆盖同名请求头；关闭时只补齐缺失的请求头。整行留空自动忽略。
+                      </span>
+                    </span>
+                  </label>
+                </div>
                 {(editingAccount?.site?.platform || "").toLowerCase() ===
                   "sub2api" && (
                   <>
@@ -2742,11 +3434,444 @@ export default function Accounts() {
             ) : null}
           </CenteredModal>
 
+          <CenteredModal
+            open={!!availabilityModal}
+            onClose={() => setAvailabilityModal(null)}
+            title={`${resolveAccountDisplayName(availabilityModal?.account) || "连接"} · 可用性详情`}
+            maxWidth={680}
+            closeOnBackdrop={true}
+            closeOnEscape={true}
+            footer={
+              <button
+                onClick={() => setAvailabilityModal(null)}
+                className="btn btn-ghost"
+              >
+                关闭
+              </button>
+            }
+          >
+            {(() => {
+              if (!availabilityModal) return null;
+              const availability: AvailabilitySummary | null =
+                availabilityModal.availability;
+              const lastCallAt: string | null = availabilityModal.lastCallAt;
+              if (!availability) {
+                return (
+                  <div style={{ color: "var(--color-text-muted)", fontSize: 13, textAlign: "center", padding: "24px 0" }}>
+                    暂无可用性数据
+                  </div>
+                );
+              }
+              const hasData = availability.totalRequests > 0;
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(4, 1fr)",
+                      gap: 12,
+                    }}
+                  >
+                    {[
+                      {
+                        label: "可用性",
+                        value: hasData
+                          ? formatAvailabilityPercent(availability.availabilityPercent)
+                          : "—",
+                        color: hasData
+                          ? getAvailabilityColor(availability.availabilityPercent)
+                          : "var(--color-text-muted)",
+                      },
+                      {
+                        label: "总请求",
+                        value: String(availability.totalRequests),
+                        color: "var(--color-text-primary)",
+                      },
+                      {
+                        label: "成功",
+                        value: String(availability.successCount),
+                        color: "var(--color-success, #52c41a)",
+                      },
+                      {
+                        label: "失败",
+                        value: String(availability.failedCount),
+                        color: "var(--color-error, #e55045)",
+                      },
+                    ].map((item) => (
+                      <div
+                        key={item.label}
+                        style={{
+                          textAlign: "center",
+                          padding: "10px 8px",
+                          borderRadius: "var(--radius-sm)",
+                          background: "var(--color-bg)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "var(--color-text-muted)",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {item.label}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 18,
+                            fontWeight: 700,
+                            color: item.color,
+                          }}
+                        >
+                          {item.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 24,
+                      flexWrap: "wrap",
+                      fontSize: 13,
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    {availability.averageLatencyMs != null && (
+                      <span>平均响应：{availability.averageLatencyMs}ms</span>
+                    )}
+                    {lastCallAt && (
+                      <span>最近调用：{formatRelativeTime(lastCallAt)}</span>
+                    )}
+                  </div>
+
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: "var(--color-text-primary)",
+                        marginBottom: 10,
+                      }}
+                    >
+                      分时段详情（最近 24 小时）
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginBottom: 8,
+                        fontSize: 11,
+                        color: "var(--color-text-muted)",
+                      }}
+                    >
+                      <span
+                        className="site-availability-cell"
+                        style={{
+                          background: getAvailabilityColor(100),
+                          width: 12,
+                          height: 12,
+                          borderRadius: 3,
+                        }}
+                      />
+                      <span>100%</span>
+                      <span
+                        className="site-availability-cell"
+                        style={{
+                          background: getAvailabilityColor(50),
+                          width: 12,
+                          height: 12,
+                          borderRadius: 3,
+                          marginLeft: 8,
+                        }}
+                      />
+                      <span>50%</span>
+                      <span
+                        className="site-availability-cell"
+                        style={{
+                          background: getAvailabilityColor(0),
+                          width: 12,
+                          height: 12,
+                          borderRadius: 3,
+                          marginLeft: 8,
+                        }}
+                      />
+                      <span>0%</span>
+                      <span
+                        className="site-availability-cell"
+                        style={{
+                          background: getAvailabilityColor(null),
+                          opacity: 0.3,
+                          width: 12,
+                          height: 12,
+                          borderRadius: 3,
+                          marginLeft: 8,
+                        }}
+                      />
+                      <span>无请求</span>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(12, 1fr)",
+                        gap: 4,
+                      }}
+                    >
+                      {availability.buckets.map((bucket, index) => (
+                        <div
+                          key={index}
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            gap: 2,
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: "100%",
+                              height: 24,
+                              borderRadius: 3,
+                              background: getAvailabilityColor(
+                                bucket.totalRequests > 0
+                                  ? bucket.availabilityPercent
+                                  : null,
+                              ),
+                              opacity: bucket.totalRequests > 0 ? 1 : 0.3,
+                              border: "1px solid var(--color-border-light)",
+                            }}
+                            data-tooltip={
+                              bucket.totalRequests > 0
+                                ? `${formatAvailabilityBucketLabel(bucket)}\n可用性 ${formatAvailabilityPercent(bucket.availabilityPercent)}\n${bucket.successCount} 成功 / ${bucket.failedCount} 失败${bucket.averageLatencyMs != null ? `\n平均响应 ${bucket.averageLatencyMs}ms` : ""}`
+                                : `${formatAvailabilityBucketLabel(bucket)}\n无请求`
+                            }
+                            title={
+                              bucket.totalRequests > 0
+                                ? `${formatAvailabilityBucketLabel(bucket)} | 可用性 ${formatAvailabilityPercent(bucket.availabilityPercent)} | ${bucket.successCount}成功 / ${bucket.failedCount}失败${bucket.averageLatencyMs != null ? ` | ${bucket.averageLatencyMs}ms` : ""}`
+                                : `${formatAvailabilityBucketLabel(bucket)} | 无请求`
+                            }
+                          />
+                          <span
+                            style={{
+                              fontSize: 9,
+                              color: "var(--color-text-muted)",
+                              lineHeight: 1,
+                            }}
+                          >
+                            {(() => {
+                              const parsed =
+                                parseAvailabilityBucketStart(bucket.startUtc) ||
+                                parseAvailabilityBucketLabel(bucket.label);
+                              return parsed
+                                ? `${padDateTimeSegment(parsed.getHours())}:00`
+                                : "";
+                            })()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: "var(--color-text-primary)",
+                        marginBottom: 10,
+                      }}
+                    >
+                      模型调用明细
+                    </div>
+                    {modelUsageLoading ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontSize: 13,
+                          color: "var(--color-text-muted)",
+                          padding: "12px 0",
+                        }}
+                      >
+                        <span className="spinner spinner-sm" />
+                        加载模型明细…
+                      </div>
+                    ) : modelUsageError ? (
+                      <div
+                        style={{
+                          fontSize: 13,
+                          color: "var(--color-text-muted)",
+                          padding: "4px 0",
+                        }}
+                      >
+                        {modelUsageError}
+                      </div>
+                    ) : modelUsageRows && modelUsageRows.length > 0 ? (
+                      <div style={{ overflowX: "auto" }}>
+                        <table
+                          className="data-table"
+                          style={{
+                            width: "100%",
+                            fontSize: 12,
+                            borderCollapse: "collapse",
+                          }}
+                        >
+                          <thead>
+                            <tr>
+                              <th style={{ textAlign: "left" }}>模型</th>
+                              <th style={{ textAlign: "right" }}>调用</th>
+                              <th style={{ textAlign: "right" }}>成功</th>
+                              <th style={{ textAlign: "right" }}>失败</th>
+                              <th style={{ textAlign: "right" }}>可用性</th>
+                              <th style={{ textAlign: "right" }}>平均响应</th>
+                              <th style={{ textAlign: "right" }}>最近调用</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {modelUsageRows.map((row) => (
+                              <tr key={row.model}>
+                                <td
+                                  style={{
+                                    maxWidth: 220,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  data-tooltip={row.model}
+                                >
+                                  {row.model}
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className="btn btn-link"
+                                    style={{ padding: 0, fontWeight: 400, fontSize: "inherit" }}
+                                    onClick={() =>
+                                      openProxyLogsForModel(
+                                        modelUsageAccountId ?? 0,
+                                        row.model,
+                                        "all",
+                                      )
+                                    }
+                                  >
+                                    {row.totalRequests}
+                                  </button>
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    color: "var(--color-success, #52c41a)",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className="btn btn-link"
+                                    style={{ padding: 0, fontWeight: 400, fontSize: "inherit", color: "inherit" }}
+                                    onClick={() =>
+                                      openProxyLogsForModel(
+                                        modelUsageAccountId ?? 0,
+                                        row.model,
+                                        "success",
+                                      )
+                                    }
+                                  >
+                                    {row.successCount}
+                                  </button>
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    color: "var(--color-error, #e55045)",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className="btn btn-link"
+                                    style={{ padding: 0, fontWeight: 400, fontSize: "inherit", color: "inherit" }}
+                                    onClick={() =>
+                                      openProxyLogsForModel(
+                                        modelUsageAccountId ?? 0,
+                                        row.model,
+                                        "failed",
+                                      )
+                                    }
+                                  >
+                                    {row.failedCount}
+                                  </button>
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    fontWeight: 600,
+                                    color: getAvailabilityColor(
+                                      row.availabilityPercent,
+                                    ),
+                                  }}
+                                >
+                                  {formatAvailabilityPercent(
+                                    row.availabilityPercent,
+                                  )}
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    color: "var(--color-text-secondary)",
+                                  }}
+                                >
+                                  {row.averageLatencyMs != null
+                                    ? `${row.averageLatencyMs}ms`
+                                    : "—"}
+                                </td>
+                                <td
+                                  style={{
+                                    textAlign: "right",
+                                    color: "var(--color-text-muted)",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {row.lastCallAt
+                                    ? formatRelativeTime(row.lastCallAt)
+                                    : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          fontSize: 13,
+                          color: "var(--color-text-muted)",
+                          padding: "4px 0",
+                        }}
+                      >
+                        近期无模型调用记录
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </CenteredModal>
+
           <div className="card">
-            {visibleAccounts.length > 0 ? (
+            {total > 0 ? (
               isMobile ? (
                 <div className="mobile-card-list">
-                  {visibleAccounts.map((a: any) => {
+                  {filteredAccounts.map((a: any) => {
                     const capabilities = resolveAccountCapabilities(a);
                     const connectionMode = resolveAccountCredentialMode(a);
                     const health = resolveRuntimeHealth(a);
@@ -2862,6 +3987,10 @@ export default function Accounts() {
                               </span>
                             </div>
                           }
+                        />
+                        <MobileField
+                          label="可用性"
+                          value={renderAvailabilityCell(a)}
                         />
                         <MobileField
                           label="余额"
@@ -3102,6 +4231,7 @@ export default function Accounts() {
                       <th>连接名称</th>
                       <th>站点</th>
                       <th>运行健康状态</th>
+                      <th>可用性</th>
                       <th>余额</th>
                       <th>已用</th>
                       <th>签到</th>
@@ -3114,7 +4244,7 @@ export default function Accounts() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleAccounts.map((a: any, i: number) => {
+                    {filteredAccounts.map((a: any, i: number) => {
                       const capabilities = resolveAccountCapabilities(a);
                       const connectionMode = resolveAccountCredentialMode(a);
                       return (
@@ -3165,11 +4295,28 @@ export default function Accounts() {
                               )}
                             </div>
                           </td>
-                          <td>
+                          <td
+                            style={{
+                              maxWidth: 160,
+                              overflow: "hidden",
+                            }}
+                            data-tooltip={
+                              a.site?.name
+                                ? String(a.site.name).trim() || undefined
+                                : undefined
+                            }
+                          >
                             <SiteBadgeLink
                               siteId={a.site?.id}
                               siteName={a.site?.name}
-                              badgeStyle={{ fontSize: 11 }}
+                              badgeStyle={{
+                                fontSize: 11,
+                                display: "inline-block",
+                                maxWidth: "100%",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
                             />
                           </td>
                           <td>
@@ -3215,6 +4362,9 @@ export default function Accounts() {
                                 </div>
                               );
                             })()}
+                          </td>
+                          <td style={{ fontVariantNumeric: "tabular-nums" }}>
+                            {renderAvailabilityCell(a)}
                           </td>
                           <td style={{ fontVariantNumeric: "tabular-nums" }}>
                             <div
@@ -3440,18 +4590,102 @@ export default function Accounts() {
                   />
                 </svg>
                 <div className="empty-state-title">
-                  {activeSegment === "apikey"
-                    ? "暂无 API Key 连接"
-                    : "暂无 Session 连接"}
+                  {searchCommitted
+                    ? "未找到匹配连接"
+                    : activeSegment === "apikey"
+                      ? "暂无 API Key 连接"
+                      : "暂无 Session 连接"}
                 </div>
                 <div className="empty-state-desc">
-                  {activeSegment === "apikey"
-                    ? sites.length > 0
-                      ? "请为现有站点补充 API Key 连接"
-                      : "请先添加站点，然后为站点补充 API Key 连接"
-                    : sites.length > 0
-                      ? "请为现有站点添加 Session 连接"
-                      : "请先添加站点，然后添加 Session 连接"}
+                  {searchCommitted
+                    ? "尝试更换关键词或清空搜索条件。"
+                    : activeSegment === "apikey"
+                      ? sites.length > 0
+                        ? "请为现有站点补充 API Key 连接"
+                        : "请先添加站点，然后为站点补充 API Key 连接"
+                      : sites.length > 0
+                        ? "请为现有站点添加 Session 连接"
+                        : "请先添加站点，然后添加 Session 连接"}
+                </div>
+              </div>
+            )}
+            {total > 0 && (
+              <div className="pagination">
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--color-text-muted)",
+                    marginRight: "auto",
+                  }}
+                >
+                  显示第 {displayedStart} - {displayedEnd} 条，共 {total} 条
+                </div>
+                <button
+                  className="pagination-btn"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((current) => current - 1)}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                </button>
+                {pageNumbers.map((num) => (
+                  <button
+                    key={num}
+                    className={`pagination-btn ${safePage === num ? "active" : ""}`}
+                    onClick={() => setPage(num)}
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  className="pagination-btn"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                </button>
+                <div className="pagination-size">
+                  每页条数:
+                  <div style={{ minWidth: 86 }}>
+                    <ModernSelect
+                      size="sm"
+                      value={String(pageSize)}
+                      onChange={(nextValue) => {
+                        setPageSize(Number(nextValue));
+                        setPage(1);
+                      }}
+                      options={ACCOUNT_PAGE_SIZES.map((s) => ({
+                        value: String(s),
+                        label: String(s),
+                      }))}
+                      placeholder={String(pageSize)}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -3493,6 +4727,10 @@ export default function Accounts() {
             toast.error(err?.message || "删除失败");
           }
         }}
+        onToggleProtocolOverride={toggleProtocolOverride}
+        onResetProtocolOverride={resetProtocolOverride}
+        onToggleProtocolEditor={toggleProtocolEditor}
+        onSaveProtocols={saveProtocolOverrides}
       />
     </div>
   );

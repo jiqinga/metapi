@@ -8,6 +8,7 @@ type InsertHelpersModule = typeof import('./insertHelpers.js');
 
 describe('insert helpers', () => {
   let db: DbModule['db'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let schema: DbModule['schema'];
   let insertHelpers: InsertHelpersModule;
   let dataDir = '';
@@ -18,6 +19,7 @@ describe('insert helpers', () => {
     await import('./migrate.js');
     const dbModule = await import('./index.js');
     db = dbModule.db;
+    closeDbConnections = dbModule.closeDbConnections;
     schema = dbModule.schema;
     insertHelpers = await import('./insertHelpers.js');
   });
@@ -26,7 +28,8 @@ describe('insert helpers', () => {
     await db.delete(schema.sites).run();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    await closeDbConnections();
     delete process.env.DATA_DIR;
     if (dataDir) {
       rmSync(dataDir, { recursive: true, force: true });

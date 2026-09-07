@@ -6,7 +6,7 @@ import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
-import { updateBalanceRefreshCron, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
+import { updateBalanceRefreshCron, updateBalanceRefreshEnabled, updateCheckinEnabled, updateCheckinSchedule, updateDailySummaryEnabled, updateLogCleanupEnabled, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
 import {
   exportBackup,
@@ -68,10 +68,15 @@ interface RuntimeSettingsBody {
   proxyDebugRetentionHours?: number;
   proxyDebugMaxBodyBytes?: number;
   checkinCron?: string;
+  checkinEnabled?: boolean;
   checkinScheduleMode?: 'cron' | 'interval';
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  balanceRefreshEnabled?: boolean;
+  balanceRefreshModelsEnabled?: boolean;
+  dailySummaryEnabled?: boolean;
   logCleanupCron?: string;
+  logCleanupEnabled?: boolean;
   logCleanupUsageLogsEnabled?: boolean;
   logCleanupProgramLogsEnabled?: boolean;
   logCleanupRetentionDays?: number;
@@ -99,10 +104,19 @@ interface RuntimeSettingsBody {
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
-  tokenRouterFailureCooldownMaxSec?: number;
+  embeddingCacheEnabled?: boolean;
+  embeddingCacheTtlSec?: number;
+  embeddingCacheMaxEntries?: number;
+  tokenRouterFailureCooldownMaxSec?: number
+  accountVerifyTimeoutMs?: number;
+  proxyTestTimeoutMs?: number;
+  modelProtocolBadgeWindowDays?: number;
+  accountAvailabilityWindowHours?: number;
   routingWeights?: Partial<RoutingWeights>;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
+  claudeCodeCloakEnabled?: boolean;
+  codexCloakEnabled?: boolean;
   globalBlockedBrands?: string[];
   globalAllowedModels?: string[];
 }
@@ -366,10 +380,39 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       });
       return;
     }
+    case 'checkin_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.checkinEnabled = value;
+      updateCheckinEnabled(value);
+      return;
+    }
     case 'balance_refresh_cron': {
       if (typeof value !== 'string' || !value || !cron.validate(value)) return;
       config.balanceRefreshCron = value;
       updateBalanceRefreshCron(value);
+      return;
+    }
+    case 'balance_refresh_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.balanceRefreshEnabled = value;
+      updateBalanceRefreshEnabled(value);
+      return;
+    }
+    case 'balance_refresh_models_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.balanceRefreshModelsEnabled = value;
+      return;
+    }
+    case 'daily_summary_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.dailySummaryEnabled = value;
+      updateDailySummaryEnabled(value);
+      return;
+    }
+    case 'log_cleanup_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.logCleanupEnabled = value;
+      updateLogCleanupEnabled(value);
       return;
     }
     case 'log_cleanup_cron': {
@@ -517,6 +560,22 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
     case 'proxy_empty_content_fail_enabled': {
       try {
         config.proxyEmptyContentFailEnabled = parseBooleanFlag(value, '空内容判定失败开关');
+      } catch {
+        return;
+      }
+      return;
+    }
+    case 'claude_code_cloak_enabled': {
+      try {
+        config.claudeCodeCloakEnabled = parseBooleanFlag(value, 'Claude Code 请求伪装开关');
+      } catch {
+        return;
+      }
+      return;
+    }
+    case 'codex_cloak_enabled': {
+      try {
+        config.codexCloakEnabled = parseBooleanFlag(value, 'Codex 请求伪装开关');
       } catch {
         return;
       }
@@ -702,6 +761,30 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.tokenRouterFailureCooldownMaxSec = normalized;
       return;
     }
+    case 'account_verify_timeout_ms': {
+      const timeoutMs = Number(value);
+      if (!Number.isFinite(timeoutMs) || timeoutMs < 3000) return;
+      config.accountVerifyTimeoutMs = Math.trunc(timeoutMs);
+      return;
+    }
+    case 'proxy_test_timeout_ms': {
+      const timeoutMs = Number(value);
+      if (!Number.isFinite(timeoutMs) || timeoutMs < 3000) return;
+      config.proxyTestTimeoutMs = Math.trunc(timeoutMs);
+      return;
+    }
+    case 'model_protocol_badge_window_days': {
+      const days = Number(value);
+      if (!Number.isFinite(days) || days < 1) return;
+      config.modelProtocolBadgeWindowDays = Math.trunc(days);
+      return;
+    }
+    case 'account_availability_window_hours': {
+      const hours = Number(value);
+      if (!Number.isFinite(hours) || hours < 1) return;
+      config.accountAvailabilityWindowHours = Math.trunc(hours);
+      return;
+    }
     case 'post_refresh_probe_enabled':
     case 'post_refresh_probe_model':
     case 'post_refresh_probe_scope':
@@ -714,10 +797,15 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
 function getRuntimeSettingsResponse(currentAdminIp = '') {
   return {
     checkinCron: config.checkinCron,
+    checkinEnabled: config.checkinEnabled,
     checkinScheduleMode: config.checkinScheduleMode,
     checkinIntervalHours: config.checkinIntervalHours,
     balanceRefreshCron: config.balanceRefreshCron,
+    balanceRefreshEnabled: config.balanceRefreshEnabled,
+    balanceRefreshModelsEnabled: config.balanceRefreshModelsEnabled,
+    dailySummaryEnabled: config.dailySummaryEnabled,
     logCleanupCron: config.logCleanupCron,
+    logCleanupEnabled: config.logCleanupEnabled,
     logCleanupUsageLogsEnabled: config.logCleanupUsageLogsEnabled,
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
@@ -738,7 +826,14 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
+    embeddingCacheEnabled: config.embeddingCacheEnabled,
+    embeddingCacheTtlSec: config.embeddingCacheTtlSec,
+    embeddingCacheMaxEntries: config.embeddingCacheMaxEntries,
     tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
+    accountVerifyTimeoutMs: config.accountVerifyTimeoutMs,
+    proxyTestTimeoutMs: config.proxyTestTimeoutMs,
+    modelProtocolBadgeWindowDays: config.modelProtocolBadgeWindowDays,
+    accountAvailabilityWindowHours: config.accountAvailabilityWindowHours,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
     barkUrl: config.barkUrl,
@@ -768,6 +863,8 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     payloadRules: config.payloadRules,
     proxyErrorKeywords: config.proxyErrorKeywords,
     proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
+    claudeCodeCloakEnabled: config.claudeCodeCloakEnabled,
+    codexCloakEnabled: config.codexCloakEnabled,
     proxyTokenMasked: maskSecret(config.proxyToken),
     globalBlockedBrands: config.globalBlockedBrands,
     globalAllowedModels: config.globalAllowedModels,
@@ -990,6 +1087,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       || body.checkinScheduleMode !== undefined
       || body.checkinIntervalHours !== undefined;
 
+    if (body.checkinEnabled !== undefined) {
+      if (body.checkinEnabled !== config.checkinEnabled) {
+        changedLabels.push(`签到定时任务（${config.checkinEnabled ? '开启' : '关闭'} -> ${body.checkinEnabled ? '开启' : '关闭'}）`);
+      }
+      updateCheckinEnabled(body.checkinEnabled);
+      upsertSetting('checkin_enabled', body.checkinEnabled);
+    }
+
     if (body.checkinCron !== undefined) {
       if (!cron.validate(body.checkinCron)) {
         return reply.code(400).send({ success: false, message: '签到 Cron 表达式无效' });
@@ -1052,6 +1157,40 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       updateBalanceRefreshCron(body.balanceRefreshCron);
       upsertSetting('balance_refresh_cron', body.balanceRefreshCron);
+    }
+
+    if (body.balanceRefreshModelsEnabled !== undefined) {
+      if (body.balanceRefreshModelsEnabled !== config.balanceRefreshModelsEnabled) {
+        changedLabels.push(body.balanceRefreshModelsEnabled
+          ? '余额刷新时启用模型刷新'
+          : '余额刷新时关闭模型刷新');
+      }
+      config.balanceRefreshModelsEnabled = body.balanceRefreshModelsEnabled;
+      upsertSetting('balance_refresh_models_enabled', body.balanceRefreshModelsEnabled);
+    }
+
+    if (body.balanceRefreshEnabled !== undefined) {
+      if (body.balanceRefreshEnabled !== config.balanceRefreshEnabled) {
+        changedLabels.push(`余额刷新定时任务（${config.balanceRefreshEnabled ? '开启' : '关闭'} -> ${body.balanceRefreshEnabled ? '开启' : '关闭'}）`);
+      }
+      updateBalanceRefreshEnabled(body.balanceRefreshEnabled);
+      upsertSetting('balance_refresh_enabled', body.balanceRefreshEnabled);
+    }
+
+    if (body.dailySummaryEnabled !== undefined) {
+      if (body.dailySummaryEnabled !== config.dailySummaryEnabled) {
+        changedLabels.push(`每日汇总定时任务（${config.dailySummaryEnabled ? '开启' : '关闭'} -> ${body.dailySummaryEnabled ? '开启' : '关闭'}）`);
+      }
+      updateDailySummaryEnabled(body.dailySummaryEnabled);
+      upsertSetting('daily_summary_enabled', body.dailySummaryEnabled);
+    }
+
+    if (body.logCleanupEnabled !== undefined) {
+      if (body.logCleanupEnabled !== config.logCleanupEnabled) {
+        changedLabels.push(`日志清理定时任务（${config.logCleanupEnabled ? '开启' : '关闭'} -> ${body.logCleanupEnabled ? '开启' : '关闭'}）`);
+      }
+      updateLogCleanupEnabled(body.logCleanupEnabled);
+      upsertSetting('log_cleanup_enabled', body.logCleanupEnabled);
     }
 
     const logCleanupTouched =
@@ -1417,6 +1556,42 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('proxy_empty_content_fail_enabled', config.proxyEmptyContentFailEnabled);
     }
 
+    if (body.claudeCodeCloakEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.claudeCodeCloakEnabled, 'Claude Code 请求伪装开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || 'Claude Code 请求伪装开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.claudeCodeCloakEnabled) {
+        changedLabels.push('Claude Code 请求伪装');
+      }
+      config.claudeCodeCloakEnabled = nextValue;
+      upsertSetting('claude_code_cloak_enabled', config.claudeCodeCloakEnabled);
+    }
+
+    if (body.codexCloakEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.codexCloakEnabled, 'Codex 请求伪装开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || 'Codex 请求伪装开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.codexCloakEnabled) {
+        changedLabels.push('Codex 请求伪装');
+      }
+      config.codexCloakEnabled = nextValue;
+      upsertSetting('codex_cloak_enabled', config.codexCloakEnabled);
+    }
+
     if (body.globalBlockedBrands !== undefined) {
       if (!Array.isArray(body.globalBlockedBrands)) {
         return reply.code(400).send({ error: 'globalBlockedBrands must be an array of strings' });
@@ -1710,6 +1885,27 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('proxy_first_byte_timeout_sec', normalized);
     }
 
+    if (body.embeddingCacheEnabled !== undefined) {
+      config.embeddingCacheEnabled = Boolean(body.embeddingCacheEnabled);
+      upsertSetting('embedding_cache_enabled', config.embeddingCacheEnabled);
+    }
+    if (body.embeddingCacheTtlSec !== undefined) {
+      const nextTtl = Number(body.embeddingCacheTtlSec);
+      if (!Number.isFinite(nextTtl) || nextTtl < 1) {
+        return reply.code(400).send({ success: false, message: 'embeddingCacheTtlSec 必须是大于 0 的数字' });
+      }
+      config.embeddingCacheTtlSec = Math.trunc(nextTtl);
+      upsertSetting('embedding_cache_ttl_sec', config.embeddingCacheTtlSec);
+    }
+    if (body.embeddingCacheMaxEntries !== undefined) {
+      const nextMax = Number(body.embeddingCacheMaxEntries);
+      if (!Number.isFinite(nextMax) || nextMax < 1) {
+        return reply.code(400).send({ message: 'embeddingCacheMaxEntries 必须是大于 0 的数字', success: false });
+      }
+      config.embeddingCacheMaxEntries = Math.trunc(nextMax);
+      upsertSetting('embedding_cache_max_entries', config.embeddingCacheMaxEntries);
+    }
+
     if (body.tokenRouterFailureCooldownMaxSec !== undefined) {
       const normalized = normalizeTokenRouterFailureCooldownMaxSec(body.tokenRouterFailureCooldownMaxSec);
       if (normalized == null) {
@@ -1720,6 +1916,58 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.tokenRouterFailureCooldownMaxSec = normalized;
       upsertSetting('token_router_failure_cooldown_max_sec', normalized);
+    }
+
+    if (body.accountVerifyTimeoutMs !== undefined) {
+      const rawTimeoutMs = Number(body.accountVerifyTimeoutMs);
+      if (!Number.isFinite(rawTimeoutMs) || rawTimeoutMs < 3000) {
+        return reply.code(400).send({ success: false, message: 'Token 验证超时必须是大于等于 3000 的整数毫秒' });
+      }
+      const nextTimeoutMs = Math.trunc(rawTimeoutMs);
+      if (nextTimeoutMs !== config.accountVerifyTimeoutMs) {
+        changedLabels.push(`Token 验证超时（${config.accountVerifyTimeoutMs}ms -> ${nextTimeoutMs}ms）`);
+      }
+      config.accountVerifyTimeoutMs = nextTimeoutMs;
+      upsertSetting('account_verify_timeout_ms', nextTimeoutMs);
+    }
+
+    if (body.proxyTestTimeoutMs !== undefined) {
+      const rawProxyTestTimeoutMs = Number(body.proxyTestTimeoutMs);
+      if (!Number.isFinite(rawProxyTestTimeoutMs) || rawProxyTestTimeoutMs < 3000) {
+        return reply.code(400).send({ success: false, message: '模型训练场超时必须是大于等于 3000 的整数毫秒' });
+      }
+      const nextProxyTestTimeoutMs = Math.trunc(rawProxyTestTimeoutMs);
+      if (nextProxyTestTimeoutMs !== config.proxyTestTimeoutMs) {
+        changedLabels.push(`模型训练场超时（${config.proxyTestTimeoutMs}ms -> ${nextProxyTestTimeoutMs}ms）`);
+      }
+      config.proxyTestTimeoutMs = nextProxyTestTimeoutMs;
+      upsertSetting('proxy_test_timeout_ms', nextProxyTestTimeoutMs);
+    }
+
+    if (body.modelProtocolBadgeWindowDays !== undefined) {
+      const rawDays = Number(body.modelProtocolBadgeWindowDays);
+      if (!Number.isFinite(rawDays) || rawDays < 1) {
+        return reply.code(400).send({ success: false, message: '模型协议标签回看天数必须是不小于 1 的整数' });
+      }
+      const nextDays = Math.trunc(rawDays);
+      if (nextDays !== config.modelProtocolBadgeWindowDays) {
+        changedLabels.push(`协议标签回看窗口（${config.modelProtocolBadgeWindowDays}天 -> ${nextDays}天）`);
+      }
+      config.modelProtocolBadgeWindowDays = nextDays;
+      upsertSetting('model_protocol_badge_window_days', nextDays);
+    }
+
+    if (body.accountAvailabilityWindowHours !== undefined) {
+      const rawHours = Number(body.accountAvailabilityWindowHours);
+      if (!Number.isFinite(rawHours) || rawHours < 1) {
+        return reply.code(400).send({ success: false, message: '连接可用性回看小时数必须是不小于 1 的整数' });
+      }
+      const nextHours = Math.trunc(rawHours);
+      if (nextHours !== config.accountAvailabilityWindowHours) {
+        changedLabels.push(`可用性回看窗口（${config.accountAvailabilityWindowHours}小时 -> ${nextHours}小时）`);
+      }
+      config.accountAvailabilityWindowHours = nextHours;
+      upsertSetting('account_availability_window_hours', nextHours);
     }
 
     if (pendingPayloadRules !== undefined) {

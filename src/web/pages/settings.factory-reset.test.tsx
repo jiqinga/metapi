@@ -122,7 +122,7 @@ describe('Settings factory reset', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/maintenance']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>

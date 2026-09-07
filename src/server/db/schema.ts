@@ -55,6 +55,28 @@ export const siteDisabledModels = sqliteTable('site_disabled_models', {
   siteIdIdx: index('site_disabled_models_site_id_idx').on(table.siteId),
 }));
 
+export const accountDisabledModels = sqliteTable('account_disabled_models', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  accountModelUnique: uniqueIndex('account_disabled_models_account_model_unique').on(table.accountId, table.modelName),
+  accountIdIdx: index('account_disabled_models_account_id_idx').on(table.accountId),
+}));
+
+export const siteModelProtocolOverrides = sqliteTable('site_model_protocol_overrides', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  protocols: text('protocols').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  overrideUnique: uniqueIndex('site_model_protocol_overrides_site_model_unique').on(table.siteId, table.modelName),
+  siteIdIdx: index('site_model_protocol_overrides_site_id_idx').on(table.siteId),
+}));
+
 export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
@@ -263,6 +285,7 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   clientAppName: text('client_app_name'),
   clientConfidence: text('client_confidence'),
   errorMessage: text('error_message'),
+  upstreamEndpoint: text('upstream_endpoint'), // 'chat' | 'messages' | 'responses' | null
   retryCount: integer('retry_count').default(0),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -463,6 +486,27 @@ export const siteHourUsage = sqliteTable('site_hour_usage', {
   nonNegative: check(
     'site_hour_usage_non_negative',
     sql`${table.totalCalls} >= 0 and ${table.successCalls} >= 0 and ${table.failedCalls} >= 0 and ${table.totalTokens} >= 0 and ${table.totalSummarySpend} >= 0 and ${table.totalSiteSpend} >= 0 and ${table.totalLatencyMs} >= 0 and ${table.latencyCount} >= 0`,
+  ),
+}));
+
+export const accountHourUsage = sqliteTable('account_hour_usage', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  bucketStartUtc: text('bucket_start_utc').notNull(),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  totalCalls: integer('total_calls').notNull().default(0),
+  successCalls: integer('success_calls').notNull().default(0),
+  failedCalls: integer('failed_calls').notNull().default(0),
+  totalLatencyMs: integer('total_latency_ms').notNull().default(0),
+  latencyCount: integer('latency_count').notNull().default(0),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  hourAccountUnique: uniqueIndex('account_hour_usage_hour_account_unique').on(table.bucketStartUtc, table.accountId),
+  hourIdx: index('account_hour_usage_hour_idx').on(table.bucketStartUtc),
+  accountIdx: index('account_hour_usage_account_id_idx').on(table.accountId),
+  nonNegative: check(
+    'account_hour_usage_non_negative',
+    sql`${table.totalCalls} >= 0 and ${table.successCalls} >= 0 and ${table.failedCalls} >= 0 and ${table.totalLatencyMs} >= 0 and ${table.latencyCount} >= 0`,
   ),
 }));
 

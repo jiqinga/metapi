@@ -41,6 +41,7 @@ type ProxyLogProjectionRow = {
   modelRequested: string | null;
   siteId: number | null;
   sitePlatform: string | null;
+  accountId: number | null;
 };
 
 type SiteDayUsageDeltaRow = {
@@ -69,6 +70,16 @@ type SiteHourUsageDeltaRow = {
   latencyCount: number;
 };
 
+type AccountHourUsageDeltaRow = {
+  bucketStartUtc: string;
+  accountId: number;
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  totalLatencyMs: number;
+  latencyCount: number;
+};
+
 type ModelDayUsageDeltaRow = {
   localDay: string;
   siteId: number;
@@ -85,6 +96,7 @@ type ModelDayUsageDeltaRow = {
 type ProjectionBatchDelta = {
   siteDayRows: SiteDayUsageDeltaRow[];
   siteHourRows: SiteHourUsageDeltaRow[];
+  accountHourRows: AccountHourUsageDeltaRow[];
   modelDayRows: ModelDayUsageDeltaRow[];
 };
 
@@ -202,6 +214,7 @@ function clearAnalyticsSnapshots() {
   clearSnapshotCache('site-stats');
   clearSnapshotCache('dashboard-summary');
   clearSnapshotCache('dashboard-insights');
+  clearSnapshotCache('accounts-snapshot');
 }
 
 function buildProjectionLeaseOwner() {
@@ -396,6 +409,7 @@ async function fetchProjectionBatch(afterId: number, limit: number) {
       modelRequested: schema.proxyLogs.modelRequested,
       siteId: schema.sites.id,
       sitePlatform: schema.sites.platform,
+      accountId: schema.proxyLogs.accountId,
     })
     .from(schema.proxyLogs)
     .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
@@ -411,6 +425,7 @@ async function fetchProjectionBatch(afterId: number, limit: number) {
 function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBatchDelta {
   const siteDayMap = new Map<string, SiteDayUsageDeltaRow>();
   const siteHourMap = new Map<string, SiteHourUsageDeltaRow>();
+  const accountHourMap = new Map<string, AccountHourUsageDeltaRow>();
   const modelDayMap = new Map<string, ModelDayUsageDeltaRow>();
 
   for (const row of rows) {
@@ -488,6 +503,26 @@ function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBat
     siteHour.latencyCount += latencyCount;
     siteHourMap.set(siteHourKey, siteHour);
 
+    const accountId = typeof row.accountId === 'number' && row.accountId > 0 ? row.accountId : null;
+    if (accountId) {
+      const accountHourKey = `${bucketStartUtc}:${accountId}`;
+      const accountHour = accountHourMap.get(accountHourKey) || {
+        bucketStartUtc,
+        accountId,
+        totalCalls: 0,
+        successCalls: 0,
+        failedCalls: 0,
+        totalLatencyMs: 0,
+        latencyCount: 0,
+      };
+      accountHour.totalCalls += 1;
+      accountHour.successCalls += isSuccess ? 1 : 0;
+      accountHour.failedCalls += isSuccess ? 0 : 1;
+      accountHour.totalLatencyMs += latencyMs;
+      accountHour.latencyCount += latencyCount;
+      accountHourMap.set(accountHourKey, accountHour);
+    }
+
     const modelDayKey = `${localDay}:${siteId}:${model}`;
     const modelDay = modelDayMap.get(modelDayKey) || {
       localDay,
@@ -514,6 +549,7 @@ function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBat
   return {
     siteDayRows: Array.from(siteDayMap.values()),
     siteHourRows: Array.from(siteHourMap.values()),
+    accountHourRows: Array.from(accountHourMap.values()),
     modelDayRows: Array.from(modelDayMap.values()),
   };
 }
@@ -622,6 +658,49 @@ async function upsertSiteHourUsage(tx: typeof db, row: SiteHourUsageDeltaRow, up
     .run();
 }
 
+async function upsertAccountHourUsage(tx: typeof db, row: AccountHourUsageDeltaRow, updatedAt: string) {
+  const values = {
+    bucketStartUtc: row.bucketStartUtc,
+    accountId: row.accountId,
+    totalCalls: row.totalCalls,
+    successCalls: row.successCalls,
+    failedCalls: row.failedCalls,
+    totalLatencyMs: row.totalLatencyMs,
+    latencyCount: row.latencyCount,
+    updatedAt,
+  };
+
+  if (runtimeDbDialect === 'mysql') {
+    await (tx.insert(schema.accountHourUsage).values(values) as any)
+      .onDuplicateKeyUpdate({
+        set: {
+          totalCalls: sql`${schema.accountHourUsage.totalCalls} + ${row.totalCalls}`,
+          successCalls: sql`${schema.accountHourUsage.successCalls} + ${row.successCalls}`,
+          failedCalls: sql`${schema.accountHourUsage.failedCalls} + ${row.failedCalls}`,
+          totalLatencyMs: sql`${schema.accountHourUsage.totalLatencyMs} + ${row.totalLatencyMs}`,
+          latencyCount: sql`${schema.accountHourUsage.latencyCount} + ${row.latencyCount}`,
+          updatedAt,
+        },
+      })
+      .run();
+    return;
+  }
+
+  await (tx.insert(schema.accountHourUsage).values(values) as any)
+    .onConflictDoUpdate({
+      target: [schema.accountHourUsage.bucketStartUtc, schema.accountHourUsage.accountId],
+      set: {
+        totalCalls: sql`${schema.accountHourUsage.totalCalls} + ${row.totalCalls}`,
+        successCalls: sql`${schema.accountHourUsage.successCalls} + ${row.successCalls}`,
+        failedCalls: sql`${schema.accountHourUsage.failedCalls} + ${row.failedCalls}`,
+        totalLatencyMs: sql`${schema.accountHourUsage.totalLatencyMs} + ${row.totalLatencyMs}`,
+        latencyCount: sql`${schema.accountHourUsage.latencyCount} + ${row.latencyCount}`,
+        updatedAt,
+      },
+    })
+    .run();
+}
+
 async function upsertModelDayUsage(tx: typeof db, row: ModelDayUsageDeltaRow, updatedAt: string) {
   const values = {
     localDay: row.localDay,
@@ -704,6 +783,9 @@ async function applyProjectionBatch(
     for (const row of delta.siteHourRows) {
       await upsertSiteHourUsage(tx as typeof db, row, updatedAt);
     }
+    for (const row of delta.accountHourRows) {
+      await upsertAccountHourUsage(tx as typeof db, row, updatedAt);
+    }
     for (const row of delta.modelDayRows) {
       await upsertModelDayUsage(tx as typeof db, row, updatedAt);
     }
@@ -776,6 +858,7 @@ async function applyPendingRecompute(checkpoint: ProjectionCheckpointRow) {
   await db.transaction(async (tx) => {
     await tx.delete(schema.siteDayUsage).where(gte(schema.siteDayUsage.localDay, affectedDay)).run();
     await tx.delete(schema.siteHourUsage).where(gte(schema.siteHourUsage.bucketStartUtc, affectedDayStartUtc)).run();
+    await tx.delete(schema.accountHourUsage).where(gte(schema.accountHourUsage.bucketStartUtc, affectedDayStartUtc)).run();
     await tx.delete(schema.modelDayUsage).where(gte(schema.modelDayUsage.localDay, affectedDay)).run();
     await writeProjectionCheckpoint(tx as typeof db, nextCheckpoint as any);
   });

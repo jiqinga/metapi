@@ -13,7 +13,7 @@ import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
-import { getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
+import { getDownstreamRoutingPolicy } from '../downstreamPolicyRequest.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import {
@@ -289,6 +289,13 @@ async function logProxy(
       clientAppName: clientContext?.clientAppName || null,
       clientConfidence: clientContext?.clientConfidence || null,
       errorMessage: normalizedErrorMessage,
+      upstreamEndpoint: upstreamPath
+        ? (upstreamPath.toLowerCase().includes('/chat/') || upstreamPath.toLowerCase().includes('chat/completions')
+          ? 'chat'
+          : upstreamPath.toLowerCase().includes('/responses')
+            ? 'responses'
+            : null)
+        : null,
       retryCount,
       createdAt,
     });
@@ -738,7 +745,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                       method: 'POST',
                       headers: requestForFetch.headers,
                       body: JSON.stringify(requestForFetch.body),
-                    }, channelProxyUrl),
+                    }, channelProxyUrl, selected.account.extraConfig),
                   })
                   : fetch(targetUrl, {
                     method: 'POST',
@@ -1253,7 +1260,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               method: 'POST',
               headers: requestForFetch.headers,
               body: JSON.stringify(requestForFetch.body),
-            }, channelProxyUrl),
+            }, channelProxyUrl, selected.account.extraConfig),
           })
         );
         const endpointStrategy = createChatEndpointStrategy({

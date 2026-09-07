@@ -511,6 +511,82 @@ describe("stats proxy logs routes", () => {
     });
   });
 
+  it("filters proxy logs by accountId and status", async () => {
+    const site = await db
+      .insert(schema.sites)
+      .values({
+        name: "account-filter-site",
+        url: "https://account-filter.example.com",
+        platform: "new-api",
+      })
+      .returning()
+      .get();
+    const alpha = await db
+      .insert(schema.accounts)
+      .values({
+        siteId: site.id,
+        username: "alpha-user",
+        accessToken: "alpha-token",
+        status: "active",
+      })
+      .returning()
+      .get();
+    const beta = await db
+      .insert(schema.accounts)
+      .values({
+        siteId: site.id,
+        username: "beta-user",
+        accessToken: "beta-token",
+        status: "active",
+      })
+      .returning()
+      .get();
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        accountId: alpha.id,
+        modelRequested: "gpt-5",
+        modelActual: "gpt-5",
+        status: "success",
+        totalTokens: 10,
+        estimatedCost: 0.1,
+        createdAt: formatUtcSqlDateTime(new Date("2026-03-09T08:00:00.000Z")),
+      },
+      {
+        accountId: alpha.id,
+        modelRequested: "gpt-5",
+        modelActual: "gpt-5",
+        status: "failed",
+        totalTokens: 5,
+        estimatedCost: 0.05,
+        createdAt: formatUtcSqlDateTime(new Date("2026-03-09T08:01:00.000Z")),
+      },
+      {
+        accountId: beta.id,
+        modelRequested: "gpt-5",
+        modelActual: "gpt-5",
+        status: "failed",
+        totalTokens: 20,
+        estimatedCost: 0.2,
+        createdAt: formatUtcSqlDateTime(new Date("2026-03-09T08:02:00.000Z")),
+      },
+    ]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/stats/proxy-logs?accountId=${alpha.id}&status=failed`,
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{ accountId: number | null; status: string | null }>;
+      total: number;
+    };
+    expect(body.total).toBe(1);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]?.accountId).toBe(alpha.id);
+    expect(body.items[0]?.status).toBe("failed");
+  });
+
   it("filters proxy logs by app id while keeping client options scoped only by the other filters", async () => {
     const site = await db
       .insert(schema.sites)

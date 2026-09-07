@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 type MigrationJournalEntry = {
@@ -69,6 +70,10 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'accounts', column: 'sort_order' },
   // 0006: site_disabled_models table
   { table: 'site_disabled_models' },
+  // 0028: site_model_protocol_overrides table
+  { table: 'site_model_protocol_overrides' },
+  // 0031: account_disabled_models table
+  { table: 'account_disabled_models' },
   // 0007: token_group column on account_tokens
   { table: 'account_tokens', column: 'token_group' },
   // 0009: is_manual column on model_availability
@@ -86,9 +91,37 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
 ];
 
 
+function isVitestRuntime(): boolean {
+  if ((process.env.VITEST_POOL_ID || '').trim()) return true;
+  if ((process.env.VITEST_WORKER_ID || '').trim()) return true;
+  const runtimeArgs = [...process.argv, ...process.execArgv]
+    .map((value) => String(value || '').toLowerCase());
+  return runtimeArgs.some((value) => value.includes('vitest'));
+}
+
+function resolveVitestSqlitePath(): string | null {
+  if (!isVitestRuntime()) return null;
+  if ((process.env.DB_URL || '').trim()) return null;
+  const dataDir = (process.env.DATA_DIR || '').trim();
+  const isDefaultRepoDir = dataDir && resolve(dataDir) === resolve('./data');
+  if (dataDir && !isDefaultRepoDir) {
+    // Honor the live env var directly; config.dataDir may be frozen to './data'
+    // by a transitive static import of config.js before beforeAll set DATA_DIR.
+    return resolve(dataDir, 'hub.db');
+  }
+  const workerTag = process.env.VITEST_POOL_ID
+    || process.env.VITEST_WORKER_ID
+    || `${process.pid}`;
+  return resolve(tmpdir(), `metapi-vitest-${workerTag}`, 'hub.db');
+}
+
 function resolveSqliteDbPath(): string {
   const raw = (config.dbUrl || '').trim();
-  if (!raw) return resolve(`${config.dataDir}/hub.db`);
+  if (!raw) {
+    const isolatedVitestPath = resolveVitestSqlitePath();
+    if (isolatedVitestPath) return isolatedVitestPath;
+    return resolve(`${config.dataDir}/hub.db`);
+  }
   if (raw === ':memory:') return raw;
   if (raw.startsWith('file://')) {
     const parsed = new URL(raw);

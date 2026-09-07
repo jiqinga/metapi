@@ -53,6 +53,16 @@ import { getSiteStatsSnapshot } from "../../services/siteStatsSnapshotService.js
 import {
   runUsageAggregationProjectionPass,
 } from "../../services/usageAggregationService.js";
+import {
+  loadUsageOverview,
+  loadUsageBySite,
+  loadUsageByModel,
+  loadUsageByKey,
+  loadUsageByClient,
+  loadUsageByAccount,
+  loadTokenComposition,
+  listUsageModels,
+} from "../../services/usageAnalyticsService.js";
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -183,6 +193,12 @@ function normalizeProxyLogSiteId(raw?: string): number | null {
   return parsed;
 }
 
+function normalizeProxyLogAccountId(raw?: string): number | null {
+  const parsed = Number.parseInt(raw || "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function normalizeProxyLogClientFilter(raw?: string): ProxyLogClientFilter {
   const text = (raw || "").trim();
   if (!text) return null;
@@ -264,6 +280,7 @@ function buildProxyLogWhereClause(params: {
   search?: string;
   client?: ProxyLogClientFilter;
   siteId?: number | null;
+  accountId?: number | null;
   fromUtc?: string | null;
   toUtc?: string | null;
 }) {
@@ -272,6 +289,7 @@ function buildProxyLogWhereClause(params: {
     params.search ? buildProxyLogSearchCondition(params.search) : null,
     params.client ? buildProxyLogClientCondition(params.client) : null,
     params.siteId ? eq(schema.sites.id, params.siteId) : null,
+    params.accountId ? eq(schema.proxyLogs.accountId, params.accountId) : null,
     params.fromUtc ? gte(schema.proxyLogs.createdAt, params.fromUtc) : null,
     params.toUtc ? lt(schema.proxyLogs.createdAt, params.toUtc) : null,
   ].filter(
@@ -691,6 +709,7 @@ export async function statsRoutes(app: FastifyInstance) {
     search?: string;
     client?: string;
     siteId?: string;
+    accountId?: string;
     from?: string;
     to?: string;
   }) {
@@ -700,6 +719,7 @@ export async function statsRoutes(app: FastifyInstance) {
     const search = normalizeProxyLogSearch(params.search);
     const client = normalizeProxyLogClientFilter(params.client);
     const siteId = normalizeProxyLogSiteId(params.siteId);
+    const accountId = normalizeProxyLogAccountId(params.accountId);
     const fromUtc = normalizeProxyLogTimeBoundary(params.from);
     const toUtc = normalizeProxyLogTimeBoundary(params.to);
     const listWhere = buildProxyLogWhereClause({
@@ -707,6 +727,7 @@ export async function statsRoutes(app: FastifyInstance) {
       search,
       client,
       siteId,
+      accountId,
       fromUtc,
       toUtc,
     });
@@ -804,6 +825,7 @@ export async function statsRoutes(app: FastifyInstance) {
     search?: string;
     client?: string;
     siteId?: string;
+    accountId?: string;
     from?: string;
     to?: string;
   }) {
@@ -811,12 +833,14 @@ export async function statsRoutes(app: FastifyInstance) {
     const search = normalizeProxyLogSearch(params.search);
     const client = normalizeProxyLogClientFilter(params.client);
     const siteId = normalizeProxyLogSiteId(params.siteId);
+    const accountId = normalizeProxyLogAccountId(params.accountId);
     const fromUtc = normalizeProxyLogTimeBoundary(params.from);
     const toUtc = normalizeProxyLogTimeBoundary(params.to);
     const summaryWhere = buildProxyLogWhereClause({
       search,
       client,
       siteId,
+      accountId,
       fromUtc,
       toUtc,
     });
@@ -824,6 +848,7 @@ export async function statsRoutes(app: FastifyInstance) {
       status,
       search,
       siteId,
+      accountId,
       fromUtc,
       toUtc,
     });
@@ -938,6 +963,7 @@ export async function statsRoutes(app: FastifyInstance) {
       search?: string;
       client?: string;
       siteId?: string;
+      accountId?: string;
       from?: string;
       to?: string;
       view?: string;
@@ -2029,6 +2055,109 @@ export async function statsRoutes(app: FastifyInstance) {
         .sort((a, b) => b.calls - a.calls);
 
       return { models };
+    },
+  );
+
+  // ── Usage Analytics ──────────────────────────────────────────────
+
+  type UsageQuerystring = {
+    from?: string;
+    to?: string;
+    siteId?: string;
+    model?: string;
+    refresh?: string;
+  };
+
+  function parseUsageParams(query: UsageQuerystring) {
+    const from = (query.from || "").trim() || undefined;
+    const to = (query.to || "").trim() || undefined;
+    const siteId = query.siteId ? parseInt(query.siteId, 10) : null;
+    const model = (query.model || "").trim() || null;
+    return {
+      fromDay: from,
+      toDay: to,
+      siteId: siteId != null && Number.isFinite(siteId) ? siteId : null,
+      model,
+    };
+  }
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-overview",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadUsageOverview(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-by-site",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadUsageBySite(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-by-model",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadUsageByModel(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-models",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return listUsageModels(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-by-key",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadUsageByKey(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-by-client",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadUsageByClient(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-by-account",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadUsageByAccount(parseUsageParams(request.query));
+    },
+  );
+
+  app.get<{ Querystring: UsageQuerystring }>(
+    "/api/stats/usage-token-composition",
+    async (request) => {
+      if (parseBooleanFlag(request.query.refresh)) {
+        await runUsageAggregationProjectionPass();
+      }
+      return loadTokenComposition(parseUsageParams(request.query));
     },
   );
 }

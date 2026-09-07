@@ -20,6 +20,9 @@ import {
   getInputHeader,
   headerValueToString,
 } from '../proxy-core/providers/headerUtils.js';
+import { applyClaudeCodeCloak, shouldCloakAsClaudeCode } from './claudeCodeCloak.js';
+import { applyCodexCloak, applyCodexCloakHeaders, shouldCloakAsCodex } from './codexCloak.js';
+import { getCloakOverridesFromExtraConfig } from './accountExtraConfig.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -417,6 +420,7 @@ export function buildUpstreamEndpointRequest(input: {
   responsesOriginalBody?: Record<string, unknown>;
   downstreamHeaders?: Record<string, unknown>;
   providerHeaders?: Record<string, string>;
+  accountExtraConfig?: unknown;
   codexSessionCacheKey?: string | null;
   codexExplicitSessionId?: string | null;
 }): {
@@ -439,6 +443,9 @@ export function buildUpstreamEndpointRequest(input: {
   const isAntigravityUpstream = sitePlatform === 'antigravity';
   const isInternalGeminiUpstream = isGeminiCliUpstream || isAntigravityUpstream;
   const isClaudeOauthUpstream = isClaudeUpstream && input.oauthProvider === 'claude';
+  const cloakOverrides = getCloakOverridesFromExtraConfig(input.accountExtraConfig as never);
+  const claudeCloakEnabled = cloakOverrides.claudeCode ?? config.claudeCodeCloakEnabled;
+  const codexCloakEnabled = cloakOverrides.codex ?? config.codexCloakEnabled;
 
   const hasAssistantToolCallHistory = (body: Record<string, unknown>): boolean => {
     const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -650,7 +657,17 @@ export function buildUpstreamEndpointRequest(input: {
       ?? sanitizeAnthropicMessagesBody(
         convertOpenAiBodyToAnthropicMessagesBody(openaiBody, input.modelName, input.stream),
       );
-    const configuredClaudeBody = applyConfiguredPayloadRules(sanitizedBody);
+    const payloadRuledClaudeBody = applyConfiguredPayloadRules(sanitizedBody);
+    const configuredClaudeBody = shouldCloakAsClaudeCode({
+      enabled: claudeCloakEnabled,
+      downstreamHeaders: input.downstreamHeaders,
+      downstreamBody: input.claudeOriginalBody,
+    })
+      ? applyClaudeCodeCloak({
+        body: payloadRuledClaudeBody,
+        downstreamHeaders: input.downstreamHeaders,
+      })
+      : payloadRuledClaudeBody;
 
     if (providerProfile?.id === 'claude') {
       return providerProfile.prepareRequest({
@@ -718,6 +735,22 @@ export function buildUpstreamEndpointRequest(input: {
       ),
       sitePlatform,
     );
+    const shouldCloakCodex = (
+      !isGeminiUpstream
+      && !isInternalGeminiUpstream
+      && shouldCloakAsCodex({
+        enabled: codexCloakEnabled,
+        downstreamHeaders: input.downstreamHeaders,
+      })
+    );
+    const cloakedResponsesBody = shouldCloakCodex
+      ? applyCodexCloak({ body: configuredResponsesBody })
+      : configuredResponsesBody;
+    const cloakResponsesHeaders = (headers: Record<string, string>): Record<string, string> => (
+      shouldCloakCodex
+        ? applyCodexCloakHeaders({ headers, downstreamHeaders: input.downstreamHeaders })
+        : headers
+    );
 
     if (sitePlatform === 'codex') {
       if (providerProfile?.id !== 'codex') {
@@ -731,29 +764,29 @@ export function buildUpstreamEndpointRequest(input: {
         oauthProvider: input.oauthProvider,
         oauthProjectId: input.oauthProjectId,
         sitePlatform,
-        baseHeaders: {
+        baseHeaders: cloakResponsesHeaders({
           ...commonHeaders,
           ...responsesHeaders,
-        },
+        }),
         providerHeaders: input.providerHeaders,
         codexSessionCacheKey: input.codexSessionCacheKey,
         codexExplicitSessionId: input.codexExplicitSessionId,
         responsesWebsocketTransport,
-        body: configuredResponsesBody,
+        body: cloakedResponsesBody,
       });
     }
 
-    const headers = ensureResponsesAcceptHeader({
+    const headers = ensureResponsesAcceptHeader(cloakResponsesHeaders({
       ...commonHeaders,
       ...responsesHeaders,
-    }, {
+    }), {
       stream: input.stream,
       sitePlatform,
     });
     return {
       path: resolveEndpointPath('responses'),
       headers,
-      body: configuredResponsesBody,
+      body: cloakedResponsesBody,
       runtime,
     };
   }
@@ -784,6 +817,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   sitePlatform?: string;
   claudeBody: Record<string, unknown>;
   downstreamHeaders?: Record<string, unknown>;
+  accountExtraConfig?: unknown;
 }): {
   path: string;
   headers: Record<string, string>;
@@ -805,6 +839,17 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   delete sanitizedBody.max_tokens;
   delete sanitizedBody.maxTokens;
   delete sanitizedBody.stream;
+  const effectiveBody = shouldCloakAsClaudeCode({
+    enabled: getCloakOverridesFromExtraConfig(input.accountExtraConfig as never).claudeCode
+      ?? config.claudeCodeCloakEnabled,
+    downstreamHeaders: input.downstreamHeaders,
+    downstreamBody: input.claudeBody,
+  })
+    ? applyClaudeCodeCloak({
+      body: sanitizedBody,
+      downstreamHeaders: input.downstreamHeaders,
+    })
+    : sanitizedBody;
   const providerProfile = resolveProviderProfile(sitePlatform);
   const mergedBetas = [
     ...asTrimmedString(claudeHeaders['anthropic-beta'])
@@ -832,7 +877,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
         'Content-Type': 'application/json',
       },
       claudeHeaders: effectiveClaudeHeaders,
-      body: sanitizedBody,
+      body: effectiveBody,
       action: 'countTokens',
     });
 
@@ -868,7 +913,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   return {
     path: '/v1/messages/count_tokens?beta=true',
     headers,
-    body: sanitizedBody,
+    body: effectiveBody,
     runtime: {
       executor: 'claude',
       modelName: input.modelName,

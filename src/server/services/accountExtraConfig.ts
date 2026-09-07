@@ -163,6 +163,43 @@ export function getCredentialModeFromExtraConfig(extraConfig?: ExtraConfigInput)
   return normalizeCredentialMode(parsed.credentialMode);
 }
 
+export type AccountCloakOverrides = {
+  claudeCode: boolean | null;
+  codex: boolean | null;
+};
+
+/** `undefined` = invalid input, `null` = inherit the global setting. */
+export function normalizeCloakOverrideInput(raw: unknown): boolean | null | undefined {
+  if (raw === null) return null;
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw !== 'string') return undefined;
+
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === 'inherit') return null;
+  if (normalized === 'on' || normalized === 'true') return true;
+  if (normalized === 'off' || normalized === 'false') return false;
+  return undefined;
+}
+
+export function getCloakOverridesFromExtraConfig(extraConfig?: ExtraConfigInput): AccountCloakOverrides {
+  const parsed = parseExtraConfig(extraConfig);
+  return {
+    claudeCode: typeof parsed.claudeCodeCloak === 'boolean' ? parsed.claudeCodeCloak : null,
+    codex: typeof parsed.codexCloak === 'boolean' ? parsed.codexCloak : null,
+  };
+}
+
+/** Raw per-account custom headers; shape matches `sites.customHeaders`. */
+export function getCustomHeadersFromExtraConfig(extraConfig?: ExtraConfigInput): unknown {
+  return parseExtraConfig(extraConfig).customHeaders ?? null;
+}
+
+export function getCustomHeadersOverrideRequestHeadersFromExtraConfig(
+  extraConfig?: ExtraConfigInput,
+): boolean {
+  return parseExtraConfig(extraConfig).customHeadersOverrideRequestHeaders === true;
+}
+
 export function getOauthProviderFromExtraConfig(extraConfig?: ExtraConfigInput): string | undefined {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeNonEmptyString(parsed.oauth?.provider);

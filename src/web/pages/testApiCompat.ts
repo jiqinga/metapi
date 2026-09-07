@@ -5,6 +5,7 @@ type MockLike = ((...args: any[]) => any) & {
 type AccountsCompatApiMock = {
   getAccounts?: MockLike;
   getAccountsSnapshot?: MockLike;
+  getAccountsQuery?: MockLike;
   getSites?: MockLike;
 };
 
@@ -35,10 +36,10 @@ function buildDerivedSites(accounts: any[]): any[] {
 
 export function installAccountsSnapshotCompat(apiMock: AccountsCompatApiMock) {
   apiMock.getAccountsSnapshot?.mockImplementation?.(async () => {
-    const accountsResult = typeof apiMock.getAccounts === 'function'
+    const accountsResult = typeof apiMock.getAccounts === "function"
       ? await apiMock.getAccounts()
       : [];
-    const siteResult = typeof apiMock.getSites === 'function'
+    const siteResult = typeof apiMock.getSites === "function"
       ? await apiMock.getSites()
       : [];
     const accounts = Array.isArray(accountsResult) ? accountsResult : [];
@@ -51,6 +52,45 @@ export function installAccountsSnapshotCompat(apiMock: AccountsCompatApiMock) {
       accounts,
       sites,
     };
+  });
+
+  apiMock.getAccountsQuery?.mockImplementation?.(async (params?: {
+    search?: string;
+    segment?: string;
+    siteId?: number;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const accountsResult = typeof apiMock.getAccounts === "function"
+      ? await apiMock.getAccounts()
+      : [];
+    const accounts = Array.isArray(accountsResult) ? accountsResult : [];
+    let filtered = accounts;
+    const segment = params?.segment;
+    if (segment === "session" || segment === "apikey") {
+      filtered = filtered.filter(
+        (a: any) => {
+          const mode = String(a?.credentialMode || "").toLowerCase();
+          if (mode === "session" || mode === "apikey") return mode === segment;
+          const proxyOnly = a?.capabilities?.proxyOnly;
+          return typeof proxyOnly === "boolean"
+            ? (proxyOnly ? "apikey" : "session") === segment
+            : segment === "session";
+        },
+      );
+    }
+    if (params?.siteId && params.siteId > 0) {
+      filtered = filtered.filter((a: any) => a?.site?.id === params.siteId);
+    }
+    if (params?.status) {
+      filtered = filtered.filter((a: any) => a?.status === params.status);
+    }
+    const total = filtered.length;
+    const limit = params?.limit && params.limit > 0 ? params.limit : 50;
+    const offset = params?.offset && params.offset > 0 ? params.offset : 0;
+    const items = filtered.slice(offset, offset + limit);
+    return { items, total, page: Math.floor(offset / limit) + 1, pageSize: limit };
   });
 }
 

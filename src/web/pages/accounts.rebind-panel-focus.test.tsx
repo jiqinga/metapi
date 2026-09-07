@@ -8,6 +8,7 @@ import { installAccountsSnapshotCompat } from './testApiCompat.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAccounts: vi.fn(),
+    getAccountsQuery: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getSites: vi.fn(),
   },

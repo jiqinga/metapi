@@ -105,8 +105,21 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.payloadRules = normalizePayloadRulesConfig(parseSettingFromMap<unknown>(settingsMap, 'payload_rules'));
   }
 
+  const claudeCodeCloakEnabled = parseSettingFromMap<boolean>(settingsMap, 'claude_code_cloak_enabled');
+  if (typeof claudeCodeCloakEnabled === 'boolean') {
+    config.claudeCodeCloakEnabled = claudeCodeCloakEnabled;
+  }
+
+  const codexCloakEnabled = parseSettingFromMap<boolean>(settingsMap, 'codex_cloak_enabled');
+  if (typeof codexCloakEnabled === 'boolean') {
+    config.codexCloakEnabled = codexCloakEnabled;
+  }
+
   const checkinCron = parseSettingFromMap<string>(settingsMap, 'checkin_cron');
   if (typeof checkinCron === 'string' && checkinCron) config.checkinCron = checkinCron;
+
+  const checkinEnabled = parseSettingFromMap<boolean>(settingsMap, 'checkin_enabled');
+  if (typeof checkinEnabled === 'boolean') config.checkinEnabled = checkinEnabled;
 
   const checkinScheduleMode = parseSettingFromMap<string>(settingsMap, 'checkin_schedule_mode');
   if (checkinScheduleMode === 'cron' || checkinScheduleMode === 'interval') {
@@ -121,8 +134,22 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const balanceRefreshCron = parseSettingFromMap<string>(settingsMap, 'balance_refresh_cron');
   if (typeof balanceRefreshCron === 'string' && balanceRefreshCron) config.balanceRefreshCron = balanceRefreshCron;
 
+  const balanceRefreshEnabled = parseSettingFromMap<boolean>(settingsMap, 'balance_refresh_enabled');
+  if (typeof balanceRefreshEnabled === 'boolean') config.balanceRefreshEnabled = balanceRefreshEnabled;
+
+  const balanceRefreshModelsEnabled = parseSettingFromMap<boolean>(settingsMap, 'balance_refresh_models_enabled');
+  if (typeof balanceRefreshModelsEnabled === 'boolean') {
+    config.balanceRefreshModelsEnabled = balanceRefreshModelsEnabled;
+  }
+
   const logCleanupCron = parseSettingFromMap<string>(settingsMap, 'log_cleanup_cron');
   if (typeof logCleanupCron === 'string' && logCleanupCron) config.logCleanupCron = logCleanupCron;
+
+  const dailySummaryEnabled = parseSettingFromMap<boolean>(settingsMap, 'daily_summary_enabled');
+  if (typeof dailySummaryEnabled === 'boolean') config.dailySummaryEnabled = dailySummaryEnabled;
+
+  const logCleanupEnabled = parseSettingFromMap<boolean>(settingsMap, 'log_cleanup_enabled');
+  if (typeof logCleanupEnabled === 'boolean') config.logCleanupEnabled = logCleanupEnabled;
 
   const logCleanupUsageLogsEnabled = parseSettingFromMap<boolean>(settingsMap, 'log_cleanup_usage_logs_enabled');
   if (typeof logCleanupUsageLogsEnabled === 'boolean') {
@@ -137,6 +164,16 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const logCleanupRetentionDays = parseSettingFromMap<number>(settingsMap, 'log_cleanup_retention_days');
   if (typeof logCleanupRetentionDays === 'number' && Number.isFinite(logCleanupRetentionDays) && logCleanupRetentionDays >= 1) {
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(logCleanupRetentionDays);
+  }
+
+  const modelProtocolBadgeWindowDays = parseSettingFromMap<number>(settingsMap, 'model_protocol_badge_window_days');
+  if (typeof modelProtocolBadgeWindowDays === 'number' && Number.isFinite(modelProtocolBadgeWindowDays) && modelProtocolBadgeWindowDays >= 1) {
+    config.modelProtocolBadgeWindowDays = Math.trunc(modelProtocolBadgeWindowDays);
+  }
+
+  const accountAvailabilityWindowHours = parseSettingFromMap<number>(settingsMap, 'account_availability_window_hours');
+  if (typeof accountAvailabilityWindowHours === 'number' && Number.isFinite(accountAvailabilityWindowHours) && accountAvailabilityWindowHours >= 1) {
+    config.accountAvailabilityWindowHours = Math.trunc(accountAvailabilityWindowHours);
   }
 
   const proxySessionChannelConcurrencyLimit = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_concurrency_limit');
@@ -216,8 +253,31 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   }
 
   const proxyFirstByteTimeoutSec = parseSettingFromMap<number>(settingsMap, 'proxy_first_byte_timeout_sec');
-  if (typeof proxyFirstByteTimeoutSec === 'number' && Number.isFinite(proxyFirstByteTimeoutSec) && proxyFirstByteTimeoutSec >= 0) {
+  if (typeof proxyFirstByteTimeoutSec === 'number' && Number.isFinite(proxyFirstByteTimeoutSec)) {
     config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(proxyFirstByteTimeoutSec));
+  }
+
+  const embeddingCacheEnabled = parseSettingFromMap<boolean>(settingsMap, 'embedding_cache_enabled');
+  if (typeof embeddingCacheEnabled === 'boolean') {
+    config.embeddingCacheEnabled = embeddingCacheEnabled;
+  }
+  const embeddingCacheTtlSec = parseSettingFromMap<number>(settingsMap, 'embedding_cache_ttl_sec');
+  if (typeof embeddingCacheTtlSec === 'number' && Number.isFinite(embeddingCacheTtlSec) && embeddingCacheTtlSec > 0) {
+    config.embeddingCacheTtlSec = Math.trunc(embeddingCacheTtlSec);
+  }
+  const embeddingCacheMaxEntries = parseSettingFromMap<number>(settingsMap, 'embedding_cache_max_entries');
+  if (typeof embeddingCacheMaxEntries === 'number' && embeddingCacheMaxEntries >= 1) {
+    config.embeddingCacheMaxEntries = Math.trunc(embeddingCacheMaxEntries);
+  }
+
+  const accountVerifyTimeoutMs = parseSettingFromMap<number>(settingsMap, 'account_verify_timeout_ms');
+  if (typeof accountVerifyTimeoutMs === 'number' && Number.isFinite(accountVerifyTimeoutMs) && accountVerifyTimeoutMs >= 3_000) {
+    config.accountVerifyTimeoutMs = Math.trunc(accountVerifyTimeoutMs);
+  }
+
+  const proxyTestTimeoutMs = parseSettingFromMap<number>(settingsMap, 'proxy_test_timeout_ms');
+  if (typeof proxyTestTimeoutMs === 'number' && Number.isFinite(proxyTestTimeoutMs) && proxyTestTimeoutMs >= 3_000) {
+    config.proxyTestTimeoutMs = Math.trunc(proxyTestTimeoutMs);
   }
 
   const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');

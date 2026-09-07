@@ -4,6 +4,14 @@ import { api } from "../api.js";
 import { useToast } from "../components/Toast.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import { formatCompactTokenMetric } from "../numberFormat.js";
+import {
+  formatAvailabilityPercent,
+  getAvailabilityColor,
+  parseAvailabilityBucketStart,
+  parseAvailabilityBucketLabel,
+  formatAvailabilityBucketLabel,
+  type AvailabilityBucket as SiteAvailabilityBucket,
+} from "../components/availabilityUtils.js";
 
 const ModelAnalysisPanel = lazy(
   () => import("../components/ModelAnalysisPanel.js"),
@@ -13,6 +21,9 @@ const SiteDistributionChart = lazy(
 );
 const SiteTrendChart = lazy(
   () => import("../components/charts/SiteTrendChart.js"),
+);
+const ContributionHeatmap = lazy(
+  () => import("../components/ContributionHeatmap.js"),
 );
 
 function getGreeting(): string {
@@ -59,16 +70,6 @@ type SiteSpeedState =
   | { status: "done"; ms: number }
   | undefined;
 
-type SiteAvailabilityBucket = {
-  startUtc?: string | null;
-  label: string;
-  totalRequests: number;
-  successCount: number;
-  failedCount: number;
-  availabilityPercent: number | null;
-  averageLatencyMs: number | null;
-};
-
 type SiteAvailabilitySummary = {
   siteId: number;
   siteName: string;
@@ -81,50 +82,6 @@ type SiteAvailabilitySummary = {
   averageLatencyMs: number | null;
   buckets: SiteAvailabilityBucket[];
 };
-
-function formatAvailabilityPercent(value: number | null | undefined): string {
-  if (
-    typeof value !== "number" ||
-    Number.isNaN(value) ||
-    !Number.isFinite(value)
-  )
-    return "—";
-  return `${Math.round(value)}%`;
-}
-
-function getAvailabilityColor(value: number | null | undefined): string {
-  if (
-    typeof value !== "number" ||
-    Number.isNaN(value) ||
-    !Number.isFinite(value)
-  ) {
-    return "var(--color-border-light)";
-  }
-  const clamped = Math.max(0, Math.min(100, value));
-  const low = { r: 229, g: 80, b: 69 }; // 鲜亮红
-  const mid = { r: 217, g: 161, b: 37 }; // 鲜亮黄
-  const high = { r: 82, g: 196, b: 26 }; // 鲜亮绿
-
-  const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
-
-  let r: number;
-  let g: number;
-  let b: number;
-
-  if (clamped <= 50) {
-    const t = clamped / 50;
-    r = lerp(low.r, mid.r, t);
-    g = lerp(low.g, mid.g, t);
-    b = lerp(low.b, mid.b, t);
-  } else {
-    const t = (clamped - 50) / 50;
-    r = lerp(mid.r, high.r, t);
-    g = lerp(mid.g, high.g, t);
-    b = lerp(mid.b, high.b, t);
-  }
-
-  return `rgb(${r}, ${g}, ${b})`;
-}
 
 function padDateTimeSegment(value: number): string {
   return String(value).padStart(2, "0");
@@ -168,41 +125,6 @@ function buildSiteLast24hLogsRoute(siteId: number): string {
     0,
   );
   return buildSiteLogsRoute(siteId, { from, to });
-}
-
-function parseAvailabilityBucketStart(startUtc?: string | null): Date | null {
-  const text = (startUtc || "").trim();
-  if (!text) return null;
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
-}
-
-function parseAvailabilityBucketLabel(label: string): Date | null {
-  const match = label.match(
-    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/,
-  );
-  if (!match) return null;
-  const [, year, month, day, hour, minute, second = "0"] = match;
-  const parsed = new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-    0,
-  );
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
-}
-
-function formatAvailabilityBucketLabel(bucket: SiteAvailabilityBucket): string {
-  const parsed =
-    parseAvailabilityBucketStart(bucket.startUtc) ||
-    parseAvailabilityBucketLabel(bucket.label);
-  if (!parsed) return bucket.label;
-  return `${parsed.getFullYear()}-${padDateTimeSegment(parsed.getMonth() + 1)}-${padDateTimeSegment(parsed.getDate())} ${padDateTimeSegment(parsed.getHours())}:${padDateTimeSegment(parsed.getMinutes())}:${padDateTimeSegment(parsed.getSeconds())}`;
 }
 
 function buildAvailabilityBucketLogsRoute(
@@ -966,6 +888,13 @@ export default function Dashboard({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 请求活跃度热力图 */}
+      <div style={{ marginTop: 16, marginBottom: 24 }}>
+        <Suspense fallback={<ChartFallback height={200} />}>
+          <ContributionHeatmap weeks={26} />
+        </Suspense>
       </div>
 
       {/* 站点级分析 */}

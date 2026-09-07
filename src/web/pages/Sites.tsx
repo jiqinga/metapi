@@ -53,6 +53,9 @@ type SiteSubscriptionSummary = {
   updatedAt?: number | null;
 };
 
+const SITE_PAGE_SIZES = [20, 50, 100];
+const SITE_DEFAULT_PAGE_SIZE = 50;
+
 type SiteRow = {
   id: number;
   name: string;
@@ -260,6 +263,11 @@ export default function Sites() {
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('custom');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchCommitted, setSearchCommitted] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(SITE_DEFAULT_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [highlightSiteId, setHighlightSiteId] = useState<number | null>(null);
   const [editor, setEditor] = useState<SiteEditorState | null>(null);
   const apiEndpointDraftIdRef = useRef(0);
@@ -406,9 +414,15 @@ export default function Sites() {
 
   const load = async () => {
     try {
-      const rows = await api.getSites();
-      setSites(rows || []);
-      setSelectedSiteIds((current) => current.filter((id) => (rows || []).some((site: SiteRow) => site.id === id)));
+      const result = await api.getSitesQuery({
+        search: searchCommitted || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      });
+      const rows = (result?.items || []) as SiteRow[];
+      setSites(rows);
+      setTotal(result?.total || 0);
+      setSelectedSiteIds((current) => current.filter((id) => rows.some((site) => site.id === id)));
     } catch {
       toast.error('加载站点列表失败');
     } finally {
@@ -417,14 +431,36 @@ export default function Sites() {
   };
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchCommitted, page, pageSize]);
+
+  const commitSearch = () => {
+    setPage(1);
+    setSearchCommitted(searchInput.trim());
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const displayedStart = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const displayedEnd = total === 0 ? 0 : Math.min((safePage - 1) * pageSize + sites.length, total);
+  const pageNumbers = useMemo(
+    () =>
+      Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+        if (totalPages <= 7) return i + 1;
+        if (safePage <= 4) return i + 1;
+        if (safePage >= totalPages - 3) return totalPages - 6 + i;
+        return safePage - 3 + i;
+      }),
+    [safePage, totalPages],
+  );
 
   const sortedSites = useMemo(
     () => sortItemsForDisplay(sites, sortMode, (site) => site.totalBalance || 0),
     [sites, sortMode],
   );
-  const allVisibleSitesSelected = sortedSites.length > 0 && sortedSites.every((site) => selectedSiteIds.includes(site.id));
+  const filteredSites = sortedSites;
+  const allVisibleSitesSelected = filteredSites.length > 0 && filteredSites.every((site) => selectedSiteIds.includes(site.id));
 
   const platformOptions = useMemo(() => {
     const current = form.platform.trim();
@@ -823,7 +859,12 @@ export default function Sites() {
       closeEditor();
       await load();
     } catch (e: any) {
-      toast.error(e.message || '保存失败');
+      const msg = e?.message || '';
+      if (msg.includes('Could not detect platform')) {
+        toast.error('无法识别平台类型，请手动选择平台');
+      } else {
+        toast.error(msg || '保存失败');
+      }
     } finally {
       setSaving(false);
     }
@@ -995,10 +1036,15 @@ export default function Sites() {
             : `检测到平台: ${result.platform}`,
         );
       } else {
-        toast.error(result?.error || '无法识别平台类型');
+        toast.error('无法识别平台类型');
       }
     } catch (e: any) {
-      toast.error(e.message || '自动检测失败');
+      const msg = e?.message || '';
+      if (msg.includes('Could not detect platform')) {
+        toast.error('无法识别平台类型');
+      } else {
+        toast.error(msg || '自动检测失败');
+      }
     } finally {
       setDetecting(false);
     }
@@ -1032,6 +1078,18 @@ export default function Sites() {
       initializationPresetId: detectSiteInitializationPreset(site.url, site.platform)?.id || null,
       choice: 'apikey',
     });
+  };
+
+  /**
+   * 跳转到连接管理页，并按站点平台预设切换到对应的连接分段。
+   */
+  const handleManageConnections = (site: SiteRow) => {
+    const segment = resolveInitialConnectionSegment(site.platform);
+    const params = new URLSearchParams({ siteId: String(site.id) });
+    if (segment === 'apikey') {
+      params.set('segment', 'apikey');
+    }
+    navigate(`/accounts?${params.toString()}`);
   };
 
   const handleTogglePin = async (site: SiteRow) => {
@@ -1073,10 +1131,10 @@ export default function Sites() {
 
   const toggleSelectAllVisible = (checked: boolean) => {
     if (!checked) {
-      setSelectedSiteIds((current) => current.filter((id) => !sortedSites.some((site) => site.id === id)));
+      setSelectedSiteIds((current) => current.filter((id) => !filteredSites.some((site) => site.id === id)));
       return;
     }
-    setSelectedSiteIds((current) => Array.from(new Set([...current, ...sortedSites.map((site) => site.id)])));
+    setSelectedSiteIds((current) => Array.from(new Set([...current, ...filteredSites.map((site) => site.id)])));
   };
 
   const toggleSiteDetails = (siteId: number) => {
@@ -1144,6 +1202,114 @@ export default function Sites() {
     toggleSiteSelection(siteId, !isSelected);
   };
 
+  const [exporting, setExporting] = useState(false);
+  const [exportIncludeConnections, setExportIncludeConnections] = useState(false);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importData, setImportData] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState<any>(null);
+  const [importPreviewLoading, setImportPreviewLoading] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const importPreviewTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target as Node)) {
+        setExportDropdownOpen(false);
+      }
+    };
+    if (exportDropdownOpen) {
+      document.addEventListener('mousedown', handler);
+      return () => document.removeEventListener('mousedown', handler);
+    }
+  }, [exportDropdownOpen]);
+
+  const handleExportSites = async () => {
+    setExporting(true);
+    setExportDropdownOpen(false);
+    try {
+      const ids = selectedSiteIds.length > 0 ? selectedSiteIds : undefined;
+      const data = await api.exportSites(ids, exportIncludeConnections);
+      const date = new Date().toISOString().split('T')[0];
+      const label = ids ? `sites-selected-${date}` : `sites-all-${date}`;
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `metapi-${label}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      const connNote = exportIncludeConnections && data.accounts ? `（含 ${data.accounts.length} 个连接）` : '';
+      toast.success(ids ? `已导出 ${selectedSiteIds.length} 个站点${connNote}` : `已导出全部站点${connNote}`);
+    } catch (e: any) {
+      toast.error(e?.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImportData(typeof reader.result === 'string' ? reader.result : '');
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportConfirm = async () => {
+    if (!importData.trim()) return;
+    setImporting(true);
+    try {
+      const parsed = JSON.parse(importData);
+      const result = await api.importSites(parsed);
+      const msg = `导入完成：新建 ${result.created} 个，更新 ${result.updated} 个，跳过 ${result.skipped} 个`;
+      if (result.errors.length > 0) {
+        toast.error(`${msg}；${result.errors.length} 个错误`);
+      } else {
+        toast.success(msg);
+      }
+      setImportModalOpen(false);
+      setImportData('');
+      setImportPreview(null);
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message || '导入失败，请检查数据格式');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (importPreviewTimerRef.current) {
+      window.clearTimeout(importPreviewTimerRef.current);
+    }
+    if (!importData.trim()) {
+      setImportPreview(null);
+      return;
+    }
+    let cancelled = false;
+    importPreviewTimerRef.current = window.setTimeout(async () => {
+      try {
+        const parsed = JSON.parse(importData);
+        if (cancelled) return;
+        setImportPreviewLoading(true);
+        const result = await api.previewSiteImport(parsed);
+        if (!cancelled) setImportPreview(result);
+      } catch {
+        if (!cancelled) setImportPreview(null);
+      } finally {
+        if (!cancelled) setImportPreviewLoading(false);
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+    };
+  }, [importData]);
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
@@ -1184,6 +1350,62 @@ export default function Sites() {
               />
             </div>
           )}
+          <div ref={exportDropdownRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setExportDropdownOpen((v) => !v)}
+              disabled={exporting}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              {exporting ? '导出中…' : selectedSiteIds.length > 0 ? `导出选中(${selectedSiteIds.length})` : '导出全部'} ▾
+            </button>
+            {exportDropdownOpen && !exporting && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 4,
+                  background: 'var(--color-bg)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                  zIndex: 100,
+                  padding: 12,
+                  minWidth: 200,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--color-text-primary)' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={exportIncludeConnections}
+                    onChange={(e) => setExportIncludeConnections(e.target.checked)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  包含连接（含凭据）
+                </label>
+                <button
+                  onClick={handleExportSites}
+                  className="btn btn-primary"
+                  style={{ width: '100%' }}
+                >
+                  确认导出
+                </button>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setImportModalOpen(true)}
+            className="btn btn-ghost"
+            style={{ border: '1px solid var(--color-border)' }}
+          >
+            导入站点
+          </button>
           <button onClick={openAdd} className="btn btn-primary">
             {isAdding ? '取消' : '+ 添加站点'}
           </button>
@@ -1195,8 +1417,66 @@ export default function Sites() {
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
         mobileTitle="站点排序与操作"
+        desktopContent={(
+          <div className="toolbar" style={{ marginBottom: 12, alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div className="toolbar-search" style={{ flex: '1 1 320px', maxWidth: 'unset', minWidth: 240 }}>
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitSearch();
+                }}
+                placeholder="搜索站点（名称 / URL / 平台）"
+              />
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={commitSearch}
+            >
+              搜索
+            </button>
+            {searchInput && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)' }}
+                onClick={() => {
+                  setSearchInput('');
+                  setPage(1);
+                  setSearchCommitted('');
+                }}
+              >
+                清空
+              </button>
+            )}
+          </div>
+        )}
         mobileContent={(
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="toolbar-search" style={{ maxWidth: 'unset' }}>
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitSearch();
+                }}
+                placeholder="搜索站点（名称 / URL / 平台）"
+              />
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={commitSearch}
+            >
+              搜索
+            </button>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>排序方式</div>
               <ModernSelect
@@ -1969,10 +2249,10 @@ export default function Sites() {
       )}
 
       <div className="card" style={{ overflowX: 'auto' }}>
-        {sites.length > 0 ? (
+        {total > 0 ? (
           isMobile ? (
             <div className="mobile-card-list">
-              {sortedSites.map((site) => {
+              {filteredSites.map((site) => {
                 const isExpanded = expandedSiteIds.includes(site.id);
                 return (
                   <MobileCard
@@ -2021,6 +2301,12 @@ export default function Sites() {
                           className="btn btn-link btn-link-primary"
                         >
                           添加 Key
+                        </button>
+                        <button
+                          onClick={() => handleManageConnections(site)}
+                          className="btn btn-link btn-link-primary"
+                        >
+                          管理连接
                         </button>
                         <button
                           onClick={() => openEdit(site)}
@@ -2187,6 +2473,11 @@ export default function Sites() {
                   </MobileCard>
                 );
               })}
+              {filteredSites.length === 0 && (
+                <div key="empty" style={{ textAlign: 'center', padding: '24px 0', color: 'var(--color-text-muted)' }}>
+                  {searchCommitted ? '未找到匹配站点' : '暂无站点'}
+                </div>
+              )}
             </div>
           ) : (
             <table className="data-table sites-table">
@@ -2211,7 +2502,7 @@ export default function Sites() {
                 </tr>
               </thead>
               <tbody>
-                {sortedSites.map((site, i) => (
+                {filteredSites.map((site, i) => (
                   <tr
                     key={site.id}
                     data-testid={`site-row-${site.id}`}
@@ -2347,6 +2638,12 @@ export default function Sites() {
                           添加 Key
                         </button>
                         <button
+                          onClick={() => handleManageConnections(site)}
+                          className="btn btn-link btn-link-primary"
+                        >
+                          管理连接
+                        </button>
+                        <button
                           onClick={() => openEdit(site)}
                           className="btn btn-link btn-link-primary"
                         >
@@ -2371,6 +2668,13 @@ export default function Sites() {
                     </td>
                   </tr>
                 ))}
+                {filteredSites.length === 0 && (
+                  <tr>
+                    <td colSpan={11} style={{ textAlign: 'center', padding: '24px 0', color: 'var(--color-text-muted)' }}>
+                      {searchCommitted ? '未找到匹配站点' : '暂无站点'}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           )
@@ -2388,7 +2692,373 @@ export default function Sites() {
             <div className="empty-state-desc">点击“+ 添加站点”开始使用。</div>
           </div>
         )}
+        {total > 0 && (
+          <div className="pagination">
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                marginRight: 'auto',
+              }}
+            >
+              显示第 {displayedStart} - {displayedEnd} 条，共 {total} 条
+            </div>
+            <button
+              className="pagination-btn"
+              disabled={safePage <= 1}
+              onClick={() => setPage((current) => current - 1)}
+            >
+              <svg
+                width="14"
+                height="14"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </button>
+            {pageNumbers.map((num) => (
+              <button
+                key={num}
+                className={`pagination-btn ${safePage === num ? 'active' : ''}`}
+                onClick={() => setPage(num)}
+              >
+                {num}
+              </button>
+            ))}
+            <button
+              className="pagination-btn"
+              disabled={safePage >= totalPages}
+              onClick={() => setPage((current) => current + 1)}
+            >
+              <svg
+                width="14"
+                height="14"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </button>
+            <div className="pagination-size">
+              每页条数:
+              <div style={{ minWidth: 86 }}>
+                <ModernSelect
+                  size="sm"
+                  value={String(pageSize)}
+                  onChange={(nextValue) => {
+                    setPageSize(Number(nextValue));
+                    setPage(1);
+                  }}
+                  options={SITE_PAGE_SIZES.map((s) => ({
+                    value: String(s),
+                    label: String(s),
+                  }))}
+                  placeholder={String(pageSize)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {importModalOpen && (
+        <CenteredModal
+          open={importModalOpen}
+          onClose={() => { setImportModalOpen(false); setImportData(''); setImportPreview(null); }}
+          title="导入站点"
+          footer={
+            <>
+              <button
+                onClick={() => { setImportModalOpen(false); setImportData(''); setImportPreview(null); }}
+                className="btn btn-ghost"
+                disabled={importing}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleImportConfirm}
+                className="btn btn-primary"
+                disabled={importing || !importData.trim() || (!!importPreview && importPreview.createdCount === 0 && importPreview.updatedCount === 0)}
+              >
+                {importing ? '导入中…' : '确认导入'}
+              </button>
+            </>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div
+              onClick={() => importFileRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (file) handleImportFile(file);
+              }}
+              style={{
+                border: '2px dashed var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '24px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                color: 'var(--color-text-secondary)',
+                fontSize: 13,
+                transition: 'border-color 0.2s',
+              }}
+            >
+              点击或拖拽 JSON 文件到此处
+              <input
+                ref={importFileRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImportFile(file);
+                }}
+              />
+            </div>
+            {importData.trim() && importPreviewLoading && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                <span className="spinner" style={{ width: 14, height: 14 }} />
+                正在分析导入数据…
+              </div>
+            )}
+            {importPreview && !importPreviewLoading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* Summary bar */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {[
+                    { count: importPreview.createdCount, label: '新建', bg: 'var(--color-success, #22c55e)', show: importPreview.createdCount > 0 },
+                    { count: importPreview.updatedCount, label: '更新', bg: 'var(--color-info, #3b82f6)', show: importPreview.updatedCount > 0 },
+                    { count: importPreview.noChangeCount, label: '无变化', bg: 'var(--color-text-muted, #999)', show: importPreview.noChangeCount > 0 },
+                    { count: importPreview.errorCount, label: '错误', bg: 'var(--color-error, #ef4444)', show: importPreview.errorCount > 0 },
+                  ].filter((s) => s.show).map((s) => (
+                    <span
+                      key={s.label}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 10px',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        fontWeight: 500,
+                        color: '#fff',
+                        background: s.bg,
+                      }}
+                    >
+                      {s.label} {s.count}
+                    </span>
+                  ))}
+                  {importPreview.connectionsCount > 0 && (
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '3px 10px', borderRadius: 999,
+                      fontSize: 12, color: 'var(--color-text-secondary)',
+                      background: 'var(--color-bg-hover, rgba(255,255,255,0.06))',
+                      border: '1px solid var(--color-border)',
+                    }}>
+                      含 {importPreview.connectionsCount} 个连接 · {importPreview.tokensCount} 个令牌
+                    </span>
+                  )}
+                </div>
+
+                {/* Item list */}
+                <div
+                  style={{
+                    maxHeight: 320,
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  {importPreview.items.map((item: any, index: number) => {
+                    const isCreated = item.action === 'created';
+                    const isUpdated = item.action === 'updated';
+                    const isNoChange = item.action === 'no-change';
+                    const isError = item.action === 'error';
+                    const accentColor = isCreated ? 'var(--color-success, #22c55e)'
+                      : isUpdated ? 'var(--color-info, #3b82f6)'
+                      : isError ? 'var(--color-error, #ef4444)'
+                      : 'var(--color-border)';
+                    return (
+                      <div
+                        key={index}
+                        style={{
+                          border: '1px solid var(--color-border)',
+                          borderLeft: `3px solid ${accentColor}`,
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '8px 12px',
+                          fontSize: 12,
+                          background: isNoChange ? 'transparent' : 'var(--color-bg)',
+                        }}
+                      >
+                        {/* Header row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: isNoChange || isError ? 0 : 6 }}>
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              padding: '1px 7px',
+                              borderRadius: 999,
+                              fontSize: 10,
+                              fontWeight: 600,
+                              letterSpacing: '0.02em',
+                              color: '#fff',
+                              background: accentColor,
+                              opacity: isNoChange ? 0.6 : 1,
+                            }}
+                          >
+                            {isCreated ? '新建' : isUpdated ? '更新' : isNoChange ? '无变化' : '错误'}
+                          </span>
+                          <span style={{
+                            fontWeight: 500,
+                            color: isNoChange ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            flex: '0 1 auto',
+                          }}>
+                            {item.name}
+                          </span>
+                          <span className={`badge ${platformColors[item.platform] || 'badge-muted'}`} style={{ flexShrink: 0, fontSize: 10 }}>
+                            {item.platform}
+                          </span>
+                          {!isNoChange && !isError && item.url && (
+                            <span style={{
+                              flex: 1, minWidth: 0,
+                              color: 'var(--color-text-muted)',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              fontSize: 11, textAlign: 'right',
+                            }}>
+                              {item.url}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Error message */}
+                        {isError && item.message && (
+                          <div style={{ color: 'var(--color-error, #ef4444)', fontSize: 11, marginTop: 4 }}>
+                            {item.message}
+                          </div>
+                        )}
+
+                        {/* Created: show what will be added */}
+                        {isCreated && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 2 }}>
+                            {[
+                              { label: 'API 端点', value: item.endpointsAfter },
+                              { label: '禁用模型', value: item.disabledModelsAfter },
+                              { label: '连接', value: item.connectionsAfter },
+                              { label: '令牌', value: item.tokensAfter },
+                            ].filter((s) => s.value > 0).map((s) => (
+                              <span key={s.label} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 3,
+                                padding: '2px 8px', borderRadius: 'var(--radius-xs)',
+                                background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-success, #22c55e)',
+                                fontSize: 11, fontWeight: 500,
+                              }}>
+                                {s.label} {s.value}
+                              </span>
+                            ))}
+                            {item.endpointsAfter === 0 && item.disabledModelsAfter === 0 && item.connectionsAfter === 0 && item.tokensAfter === 0 && (
+                              <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>仅站点配置</span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Updated: show field diffs and count changes */}
+                        {isUpdated && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 2 }}>
+                            {item.diffs && item.diffs.length > 0 && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                {item.diffs.map((diff: any, di: number) => (
+                                  <div key={di} style={{
+                                    display: 'flex', alignItems: 'center', gap: 4,
+                                    fontSize: 11,
+                                    padding: '2px 6px',
+                                    borderRadius: 'var(--radius-xs)',
+                                    background: 'rgba(59, 130, 246, 0.06)',
+                                  }}>
+                                    <span style={{ color: 'var(--color-text-muted)', flexShrink: 0, minWidth: 70 }}>{diff.label}</span>
+                                    <span style={{ color: 'var(--color-text-secondary)', textDecoration: 'line-through', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {diff.before}
+                                    </span>
+                                    <span style={{ color: 'var(--color-text-muted)', flexShrink: 0 }}>→</span>
+                                    <span style={{ color: 'var(--color-success, #22c55e)', fontWeight: 500, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {diff.after}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {[
+                              { label: 'API 端点', before: item.endpointsBefore, after: item.endpointsAfter },
+                              { label: '禁用模型', before: item.disabledModelsBefore, after: item.disabledModelsAfter },
+                              { label: '连接', before: item.connectionsBefore, after: item.connectionsAfter },
+                              { label: '令牌', before: item.tokensBefore, after: item.tokensAfter },
+                            ].filter((s) => s.before !== s.after).map((s) => (
+                              <div key={s.label} style={{
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                fontSize: 11, padding: '2px 6px',
+                                borderRadius: 'var(--radius-xs)',
+                                background: 'rgba(59, 130, 246, 0.06)',
+                              }}>
+                                <span style={{ color: 'var(--color-text-muted)', minWidth: 70 }}>{s.label}</span>
+                                <span style={{ color: 'var(--color-text-secondary)' }}>{s.before}</span>
+                                <span style={{ color: 'var(--color-text-muted)' }}>→</span>
+                                <span style={{ color: s.after > s.before ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)', fontWeight: 500 }}>{s.after}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>
+                或粘贴 JSON 内容
+              </div>
+              <textarea
+                value={importData}
+                onChange={(e) => setImportData(e.target.value)}
+                placeholder='{"version":"1.1","type":"sites","sites":[...]}'
+                style={{
+                  width: '100%',
+                  minHeight: 120,
+                  padding: '10px 14px',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  outline: 'none',
+                  background: 'var(--color-bg)',
+                  color: 'var(--color-text-primary)',
+                  boxSizing: 'border-box',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              导入按「平台 + URL」匹配：已存在则更新配置，不存在则新建。勾选「包含连接」导出的文件会同时导入连接和令牌。
+            </div>
+          </div>
+        </CenteredModal>
+      )}
     </div>
   );
 }

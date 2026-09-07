@@ -643,6 +643,34 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(order).toEqual(['messages', 'responses']);
   });
 
+  it('blocks /v1/responses and learns chat from new-api model-not-supported-on-endpoint errors', async () => {
+    const memoryWrite = recordUpstreamEndpointFailure({
+      siteId: baseContext.site.id,
+      endpoint: 'responses',
+      downstreamFormat: 'openai',
+      modelName: 'glm-5.3-flash',
+      status: 400,
+      errorText: 'model "glm-5.3-flash" is not supported on /v1/responses; use /v1/chat/completions instead (request id: 20260904031220929228727c955d568jy2wnuzo)',
+    });
+    expect(memoryWrite).toMatchObject({
+      action: 'failure',
+      endpoint: 'responses',
+      blockedEndpoint: 'responses',
+      preferredEndpoint: 'chat',
+    });
+
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'glm-5.3-flash',
+      'openai',
+    );
+
+    expect(order).toEqual(['chat', 'messages']);
+  });
+
   it('learns to prefer /v1/responses after a non-responses endpoint says input is required', async () => {
     const memoryWrite = recordUpstreamEndpointFailure({
       siteId: baseContext.site.id,

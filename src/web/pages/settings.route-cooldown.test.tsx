@@ -62,6 +62,9 @@ describe('Settings route cooldown cap', () => {
       tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
       adminIpAllowlist: [],
       systemProxyUrl: '',
+      accountAvailabilityWindowHours: 24,
+      accountVerifyTimeoutMs: 10000,
+      modelProtocolBadgeWindowDays: 3,
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
     apiMock.getRoutesLite.mockResolvedValue([]);
@@ -84,7 +87,7 @@ describe('Settings route cooldown cap', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/routing']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -127,8 +130,15 @@ describe('Settings route cooldown cap', () => {
           balanceWeight: 0.3,
           usageWeight: 0.3,
         },
+        embeddingCacheEnabled: true,
+        embeddingCacheTtlSec: 21600,
+        embeddingCacheMaxEntries: 1000,
         routingFallbackUnitCost: 1,
         proxyFirstByteTimeoutSec: 0,
+        accountVerifyTimeoutMs: 10000,
+        proxyTestTimeoutMs: 30000,
+        modelProtocolBadgeWindowDays: 3,
+        accountAvailabilityWindowHours: 24,
         tokenRouterFailureCooldownMaxSec: 10,
         disableCrossProtocolFallback: false,
       });
@@ -153,13 +163,16 @@ describe('Settings route cooldown cap', () => {
       tokenRouterFailureCooldownMaxSec: 10,
       adminIpAllowlist: [],
       systemProxyUrl: '',
+      accountAvailabilityWindowHours: 24,
+      accountVerifyTimeoutMs: 10000,
+      modelProtocolBadgeWindowDays: 3,
     });
 
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/routing']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -190,7 +203,7 @@ describe('Settings route cooldown cap', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/routing']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -228,8 +241,15 @@ describe('Settings route cooldown cap', () => {
           balanceWeight: 0.3,
           usageWeight: 0.3,
         },
+        embeddingCacheEnabled: true,
+        embeddingCacheTtlSec: 21600,
+        embeddingCacheMaxEntries: 1000,
         routingFallbackUnitCost: 1,
         proxyFirstByteTimeoutSec: 7,
+        accountVerifyTimeoutMs: 10000,
+        proxyTestTimeoutMs: 30000,
+        modelProtocolBadgeWindowDays: 3,
+        accountAvailabilityWindowHours: 24,
         tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
         disableCrossProtocolFallback: false,
       });

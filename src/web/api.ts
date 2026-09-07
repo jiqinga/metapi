@@ -295,6 +295,16 @@ export type ProxyTestRequestEnvelope = {
 const DEFAULT_PROXY_TEST_TIMEOUT_MS = 30_000;
 const LONG_RUNNING_PROXY_TEST_TIMEOUT_MS = 150_000;
 
+let runtimeProxyTestTimeoutMs: number | null = null;
+
+export function setProxyTestTimeoutMs(timeoutMs: number | null) {
+  if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs >= 3000) {
+    runtimeProxyTestTimeoutMs = Math.trunc(timeoutMs);
+  } else {
+    runtimeProxyTestTimeoutMs = null;
+  }
+}
+
 function resolveProxyTestTimeoutMs(data: ProxyTestRequestEnvelope) {
   if (data.jobMode) return LONG_RUNNING_PROXY_TEST_TIMEOUT_MS;
   if (data.path === "/v1/images/generations")
@@ -303,7 +313,7 @@ function resolveProxyTestTimeoutMs(data: ProxyTestRequestEnvelope) {
     return LONG_RUNNING_PROXY_TEST_TIMEOUT_MS;
   if (data.path === "/v1/videos" && data.method === "POST")
     return LONG_RUNNING_PROXY_TEST_TIMEOUT_MS;
-  return DEFAULT_PROXY_TEST_TIMEOUT_MS;
+  return runtimeProxyTestTimeoutMs ?? DEFAULT_PROXY_TEST_TIMEOUT_MS;
 }
 
 function proxyTestRequest(data: ProxyTestRequestEnvelope) {
@@ -363,6 +373,8 @@ export type RuntimeSettingsPayload = {
   proxyToken?: string;
   systemProxyUrl?: string;
   payloadRules?: Record<string, unknown> | null;
+  claudeCodeCloakEnabled?: boolean;
+  codexCloakEnabled?: boolean;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
@@ -379,10 +391,15 @@ export type RuntimeSettingsPayload = {
   proxyDebugRetentionHours?: number;
   proxyDebugMaxBodyBytes?: number;
   checkinCron?: string;
+  checkinEnabled?: boolean;
   checkinScheduleMode?: "cron" | "interval";
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  balanceRefreshEnabled?: boolean;
+  balanceRefreshModelsEnabled?: boolean;
+  dailySummaryEnabled?: boolean;
   logCleanupCron?: string;
+  logCleanupEnabled?: boolean;
   logCleanupUsageLogsEnabled?: boolean;
   logCleanupProgramLogsEnabled?: boolean;
   logCleanupRetentionDays?: number;
@@ -410,7 +427,14 @@ export type RuntimeSettingsPayload = {
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
+  embeddingCacheEnabled?: boolean;
+  embeddingCacheTtlSec?: number;
+  embeddingCacheMaxEntries?: number;
   tokenRouterFailureCooldownMaxSec?: number;
+  accountVerifyTimeoutMs?: number;
+  proxyTestTimeoutMs?: number;
+  modelProtocolBadgeWindowDays?: number;
+  accountAvailabilityWindowHours?: number;
   routingWeights?: RuntimeRoutingWeightsPayload;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
@@ -506,6 +530,7 @@ export type ProxyLogsQuery = {
   search?: string;
   client?: string;
   siteId?: number;
+  accountId?: number;
   from?: string;
   to?: string;
 };
@@ -661,6 +686,25 @@ export type OAuthQuotaWindowInfo = {
   message?: string | null;
 };
 
+export type AccountModelUsageRow = {
+  model: string;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  availabilityPercent: number | null;
+  averageLatencyMs: number | null;
+  lastCallAt: string | null;
+  totalTokens: number;
+  totalSpend: number;
+};
+
+export type AccountModelUsageResponse = {
+  accountId: number;
+  windowHours: number;
+  windowStartUtc: string;
+  models: AccountModelUsageRow[];
+};
+
 export type OAuthQuotaInfo = {
   status: "supported" | "unsupported" | "error";
   source: "official" | "reverse_engineered";
@@ -762,9 +806,108 @@ export type DownstreamApiKeyTrendResponse = {
   buckets: DownstreamApiKeyTrendBucket[];
 };
 
+// ── Usage Analytics types ──────────────────────────────────────────
+export type UsageOverviewTrendPoint = {
+  day: string;
+  tokens: number;
+  spend: number;
+  calls: number;
+  successCalls: number;
+  promptTokens: number;
+  completionTokens: number;
+};
+export type UsageOverviewResponse = {
+  trend: UsageOverviewTrendPoint[];
+  totals: {
+    tokens: number;
+    spend: number;
+    calls: number;
+    successCalls: number;
+    promptTokens: number;
+    completionTokens: number;
+  };
+};
+export type UsageBySiteItem = {
+  siteId: number;
+  siteName: string;
+  platform: string | null;
+  tokens: number;
+  spend: number;
+  calls: number;
+  successCalls: number;
+  avgLatencyMs: number | null;
+  successRate: number;
+};
+export type UsageBySiteResponse = { items: UsageBySiteItem[] };
+export type UsageByModelItem = {
+  model: string;
+  tokens: number;
+  spend: number;
+  calls: number;
+  successCalls: number;
+  avgLatencyMs: number | null;
+  successRate: number;
+};
+export type UsageByModelResponse = { items: UsageByModelItem[] };
+export type UsageByKeyItem = {
+  keyId: number | null;
+  keyName: string;
+  tokens: number;
+  spend: number;
+  calls: number;
+  successCalls: number;
+  successRate: number;
+};
+export type UsageByKeyResponse = { items: UsageByKeyItem[] };
+export type UsageByClientItem = {
+  clientName: string;
+  tokens: number;
+  spend: number;
+  calls: number;
+  successCalls: number;
+  successRate: number;
+};
+export type UsageByClientResponse = { items: UsageByClientItem[] };
+export type UsageByAccountItem = {
+  accountId: number;
+  accountName: string;
+  siteName: string;
+  tokens: number;
+  spend: number;
+  calls: number;
+  successCalls: number;
+  successRate: number;
+};
+export type UsageByAccountResponse = { items: UsageByAccountItem[] };
+export type TokenCompositionPoint = {
+  day: string;
+  promptTokens: number;
+  completionTokens: number;
+};
+export type TokenCompositionResponse = {
+  trend: TokenCompositionPoint[];
+  totals: {
+    promptTokens: number;
+    completionTokens: number;
+    promptRatio: number;
+    completionRatio: number;
+  };
+};
+export type UsageQueryOptions = {
+  from?: string;
+  to?: string;
+  siteId?: number | null;
+  model?: string | null;
+  refresh?: boolean;
+};
+
 export const api = {
   // Sites
   getSites: () => request("/api/sites"),
+  getSitesQuery: (params?: { search?: string; limit?: number; offset?: number }) =>
+    request(
+      `/api/sites/query${buildQueryString(params)}`,
+    ) as Promise<{ items: any[]; total: number; page: number; pageSize: number }>,
   addSite: (data: any) =>
     request("/api/sites", { method: "POST", body: JSON.stringify(data) }),
   updateSite: (id: number, data: any) =>
@@ -784,6 +927,23 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ models }),
     }),
+  getAccountDisabledModels: (accountId: number) =>
+    request(`/api/accounts/${accountId}/disabled-models`),
+  updateAccountDisabledModels: (accountId: number, models: string[]) =>
+    request(`/api/accounts/${accountId}/disabled-models`, {
+      method: "PUT",
+      body: JSON.stringify({ models }),
+    }),
+  getSiteModelProtocolOverrides: (siteId: number) =>
+    request(`/api/sites/${siteId}/model-protocol-overrides`),
+  updateSiteModelProtocolOverrides: (
+    siteId: number,
+    overrides: Array<{ modelName: string; protocols: string[] }>,
+  ) =>
+    request(`/api/sites/${siteId}/model-protocol-overrides`, {
+      method: "PUT",
+      body: JSON.stringify({ overrides }),
+    }),
   getSiteAvailableModels: (siteId: number) =>
     request(`/api/sites/${siteId}/available-models`),
   probeSiteNow: (siteId: number, options?: { scope?: 'single' | 'all'; modelName?: string; latencyThresholdMs?: number }) =>
@@ -791,6 +951,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(options || {}),
       timeoutMs: options?.scope === 'all' ? 120_000 : 30_000,
+    }),
+  exportSites: (ids?: number[], includeConnections = false) =>
+    request(`/api/sites/export${buildQueryString({
+      ids: ids && ids.length > 0 ? ids.map(String).join(',') : undefined,
+      includeConnections: includeConnections ? '1' : undefined,
+    })}`),
+  importSites: (data: any) =>
+    request('/api/sites/import', {
+      method: 'POST',
+      body: JSON.stringify({ data }),
+    }),
+  previewSiteImport: (data: any) =>
+    request('/api/sites/import/preview', {
+      method: 'POST',
+      body: JSON.stringify({ data }),
     }),
 
   // Accounts
@@ -806,6 +981,12 @@ export const api = {
       accounts: any[];
       sites: any[];
     }>,
+  getAccountsQuery: (
+    params?: { search?: string; segment?: string; siteId?: number; status?: string; limit?: number; offset?: number },
+  ) =>
+    request(
+      `/api/accounts/query${buildQueryString(params)}`,
+    ) as Promise<{ items: any[]; total: number; page: number; pageSize: number }>,
   addAccount: (data: any) =>
     request("/api/accounts", { method: "POST", body: JSON.stringify(data) }),
   loginAccount: (data: {
@@ -855,6 +1036,10 @@ export const api = {
   refreshBalance: (id: number) =>
     request(`/api/accounts/${id}/balance`, { method: "POST" }),
   getAccountModels: (id: number) => request(`/api/accounts/${id}/models`),
+  getAccountModelUsage: (id: number, hours?: number) =>
+    request<AccountModelUsageResponse>(
+      `/api/accounts/${id}/model-usage${hours ? `?hours=${hours}` : ""}`,
+    ),
   addAccountAvailableModels: (accountId: number, models: string[]) =>
     request(`/api/accounts/${accountId}/models/manual`, {
       method: "POST",
@@ -1120,6 +1305,83 @@ export const api = {
     request(
       `/api/stats/model-by-site?${siteId ? `siteId=${siteId}&` : ""}days=${days}`,
     ),
+  getUsageOverview: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-overview${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        model: params?.model ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<UsageOverviewResponse>,
+  getUsageBySite: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-by-site${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<UsageBySiteResponse>,
+  getUsageByModel: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-by-model${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        model: params?.model ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<UsageByModelResponse>,
+  getUsageModels: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-models${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<{ models: string[] }>,
+  getUsageByKey: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-by-key${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        model: params?.model ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<UsageByKeyResponse>,
+  getUsageByClient: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-by-client${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        model: params?.model ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<UsageByClientResponse>,
+  getUsageByAccount: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-by-account${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        model: params?.model ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<UsageByAccountResponse>,
+  getTokenComposition: (params?: UsageQueryOptions) =>
+    request(
+      `/api/stats/usage-token-composition${buildQueryString({
+        from: params?.from,
+        to: params?.to,
+        siteId: params?.siteId ?? undefined,
+        model: params?.model ?? undefined,
+        ...(params?.refresh ? { refresh: 1 } : {}),
+      })}`,
+    ) as Promise<TokenCompositionResponse>,
 
   // Search
   search: (query: string) =>

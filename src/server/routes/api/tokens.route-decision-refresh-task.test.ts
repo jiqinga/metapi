@@ -14,6 +14,7 @@ describe('POST /api/routes/decision/refresh', () => {
   let previousDataDir: string | undefined;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'] | undefined;
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let tokenRouter: TokenRouterModule['tokenRouter'];
   let getBackgroundTask: BackgroundTaskModule['getBackgroundTask'];
@@ -33,6 +34,7 @@ describe('POST /api/routes/decision/refresh', () => {
     const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     tokenRouter = tokenRouterModule.tokenRouter;
     getBackgroundTask = backgroundTaskModule.getBackgroundTask;
@@ -60,6 +62,9 @@ describe('POST /api/routes/decision/refresh', () => {
     await app.close();
     invalidateTokenRouterCache();
     vi.restoreAllMocks();
+    if (typeof closeDbConnections === 'function') {
+      await closeDbConnections();
+    }
     if (dataDir) {
       try {
         rmSync(dataDir, { recursive: true, force: true });

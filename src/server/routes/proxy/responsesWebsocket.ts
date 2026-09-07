@@ -721,6 +721,7 @@ async function handleResponsesWebsocketConnection(
                     responsesOriginalBody: normalized.request,
                     downstreamHeaders,
                     providerHeaders,
+                    accountExtraConfig: codexWebsocketChannel.account.extraConfig,
                     codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
                   });
                   const requestUrl = `${target.baseUrl.replace(/\/+$/, '')}${prepared.path}`;

@@ -12,13 +12,13 @@
     "claude",
     "aggregator"
   ],
-  "homepage": "https://github.com/cita-777/metapi#readme",
+  "homepage": "https://github.com/jiqinga/metapi#readme",
   "bugs": {
-    "url": "https://github.com/cita-777/metapi/issues"
+    "url": "https://github.com/jiqinga/metapi/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cita-777/metapi.git"
+    "url": "git+https://github.com/jiqinga/metapi.git"
   },
   "license": "MIT",
   "engines": {
@@ -87,6 +87,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
     "pg": "^8.16.3",
+    "prism-react-renderer": "^2.4.1",
     "rate-limiter-flexible": "^11.1.0",
     "socks": "^2.8.9",
     "undici": "^6.25.0",
@@ -130,8 +131,8 @@
     "minimist": "^1.2.8"
   },
   "author": {
-    "name": "cita-777",
-    "email": "cita-777@users.noreply.github.com",
-    "url": "https://github.com/cita-777"
+    "name": "jiqinga",
+    "email": "jiqinga@users.noreply.github.com",
+    "url": "https://github.com/jiqinga"
   }
 }

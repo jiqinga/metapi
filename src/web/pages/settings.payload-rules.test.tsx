@@ -109,7 +109,7 @@ describe('Settings payload rules', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -134,7 +134,7 @@ describe('Settings payload rules', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -170,7 +170,7 @@ describe('Settings payload rules', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -258,7 +258,7 @@ describe('Settings payload rules', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -350,7 +350,7 @@ describe('Settings payload rules', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -395,7 +395,7 @@ describe('Settings payload rules', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>

@@ -33,6 +33,7 @@ import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
 import ModernSelect from "../components/ModernSelect.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
 import { tr } from "../i18n.js";
+import HighlightedJson from "../components/HighlightedJson.js";
 
 type ProxyLogRenderItem = ProxyLogListItem & {
   billingDetails?: ProxyLogBillingDetails;
@@ -442,6 +443,12 @@ function normalizeRouteSiteId(raw: string | null): number | null {
   return parsed;
 }
 
+function normalizeRouteAccountId(raw: string | null): number | null {
+  const parsed = Number.parseInt(raw || "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function normalizeRouteDateTimeInput(raw: string | null): string {
   const text = (raw || "").trim();
   if (!text) return "";
@@ -459,6 +466,7 @@ function readProxyLogsRouteState(search: string) {
     search: normalizeRouteSearch(params.get("q")),
     client: normalizeRouteClient(params.get("client")),
     siteId: normalizeRouteSiteId(params.get("siteId")),
+    accountId: normalizeRouteAccountId(params.get("accountId")),
     from: normalizeRouteDateTimeInput(params.get("from")),
     to: normalizeRouteDateTimeInput(params.get("to")),
   };
@@ -471,6 +479,7 @@ function buildProxyLogsRouteSearch(input: {
   search: string;
   client: string;
   siteId: number | null;
+  accountId: number | null;
   from: string;
   to: string;
 }) {
@@ -482,6 +491,7 @@ function buildProxyLogsRouteSearch(input: {
   if (input.search.trim()) params.set("q", input.search.trim());
   if (input.client.trim()) params.set("client", input.client.trim());
   if (input.siteId) params.set("siteId", String(input.siteId));
+  if (input.accountId) params.set("accountId", String(input.accountId));
   if (input.from.trim()) params.set("from", input.from.trim());
   if (input.to.trim()) params.set("to", input.to.trim());
   const next = params.toString();
@@ -773,6 +783,9 @@ export default function ProxyLogs() {
   const [siteFilter, setSiteFilter] = useState<number | null>(
     initialRouteState.siteId,
   );
+  const [accountFilter, setAccountFilter] = useState<number | null>(
+    initialRouteState.accountId,
+  );
   const [fromInput, setFromInput] = useState(initialRouteState.from);
   const [toInput, setToInput] = useState(initialRouteState.to);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -842,6 +855,9 @@ export default function ProxyLogs() {
     setSiteFilter((current) =>
       current === next.siteId ? current : next.siteId,
     );
+    setAccountFilter((current) =>
+      current === next.accountId ? current : next.accountId,
+    );
     setFromInput((current) => (current === next.from ? current : next.from));
     setToInput((current) => (current === next.to ? current : next.to));
     setPage((current) => (current === next.page ? current : next.page));
@@ -858,6 +874,7 @@ export default function ProxyLogs() {
       search: searchInput,
       client: clientFilter,
       siteId: siteFilter,
+      accountId: accountFilter,
       from: fromInput,
       to: toInput,
     });
@@ -867,6 +884,7 @@ export default function ProxyLogs() {
       { replace: true },
     );
   }, [
+    accountFilter,
     clientFilter,
     fromInput,
     location.pathname,
@@ -991,6 +1009,7 @@ export default function ProxyLogs() {
           search: deferredSearchInput,
           ...(clientFilter ? { client: clientFilter } : {}),
           ...(siteFilter ? { siteId: siteFilter } : {}),
+          ...(accountFilter ? { accountId: accountFilter } : {}),
           ...(fromApiBoundary ? { from: fromApiBoundary } : {}),
           ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
         };
@@ -1006,6 +1025,7 @@ export default function ProxyLogs() {
       }
     },
     [
+      accountFilter,
       clientFilter,
       currentOffset,
       deferredSearchInput,
@@ -1034,6 +1054,7 @@ export default function ProxyLogs() {
           search: deferredSearchInput,
           ...(clientFilter ? { client: clientFilter } : {}),
           ...(siteFilter ? { siteId: siteFilter } : {}),
+          ...(accountFilter ? { accountId: accountFilter } : {}),
           ...(fromApiBoundary ? { from: fromApiBoundary } : {}),
           ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
           ...(forceRefresh ? { refresh: 1 } : {}),
@@ -1063,6 +1084,7 @@ export default function ProxyLogs() {
       }
     },
     [
+      accountFilter,
       clientFilter,
       deferredSearchInput,
       fromApiBoundary,
@@ -1413,33 +1435,97 @@ export default function ProxyLogs() {
     );
   }
 
-  function renderAttemptDetail(attempt: ProxyDebugTraceAttempt) {
-    const serializedAttempt = [
-      `targetUrl: ${attempt.targetUrl}`,
-      `runtimeExecutor: ${attempt.runtimeExecutor || "-"}`,
-      `recoverApplied: ${attempt.recoverApplied ? "true" : "false"}`,
-      `downgradeDecision: ${attempt.downgradeDecision ? "true" : "false"}`,
-      `downgradeReason: ${attempt.downgradeReason || "-"}`,
-      "",
-      "requestHeaders:",
-      stringifyStoredDebugValue(attempt.requestHeadersJson) || "-",
-      "",
-      "requestBody:",
-      stringifyStoredDebugValue(attempt.requestBodyJson) || "-",
-      "",
-      "responseHeaders:",
-      stringifyStoredDebugValue(attempt.responseHeadersJson) || "-",
-      "",
-      "responseBody:",
-      stringifyStoredDebugValue(attempt.responseBodyJson) || "-",
-      "",
-      "rawErrorText:",
-      attempt.rawErrorText || "-",
-      "",
-      "memoryWrite:",
-      stringifyStoredDebugValue(attempt.memoryWriteJson) || "-",
-    ].join("\n");
+  function renderAttemptDebugBlock(
+    label: string,
+    value: unknown,
+    options?: {
+      plainText?: boolean;
+      accent?: string;
+      showSseMerged?: boolean;
+    },
+  ) {
+    const normalized = options?.plainText
+      ? null
+      : parseStoredDebugPreview(value);
+    const displayText = options?.plainText
+      ? (value as string) || "-"
+      : normalized?.displayText || "-";
+    const note = options?.plainText ? null : normalized?.note;
+    const isEmpty = displayText === "-";
+    const accent = options?.accent;
 
+    if (isEmpty) {
+      return (
+        <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+          <div style={detailInfoLabelStyle}>{label}</div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--color-text-muted)",
+              fontStyle: "italic",
+              padding: "4px 0",
+            }}
+          >
+            （空）
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={{ ...detailInfoLabelStyle, fontWeight: 600 }}>
+            {label}
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{
+              border: "1px solid var(--color-border)",
+              padding: "4px 10px",
+              fontSize: 11,
+            }}
+            aria-label={`复制${label}`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void handleCopyStoredDebugValue(label, value);
+            }}
+          >
+            复制
+          </button>
+        </div>
+        {note ? (
+          <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+            {note}
+          </div>
+        ) : null}
+        <HighlightedJson
+          code={displayText}
+          showSseMerged={options?.showSseMerged}
+          style={{
+            ...debugCodeBlockStyle,
+            ...(accent
+              ? {
+                  borderLeft: `3px solid ${accent}`,
+                  paddingLeft: 14,
+                }
+              : null),
+          }}
+        />
+      </div>
+    );
+  }
+
+  function renderAttemptDetail(attempt: ProxyDebugTraceAttempt) {
     return (
       <DetailDisclosureCard
         key={attempt.id}
@@ -1483,7 +1569,87 @@ export default function ProxyLogs() {
               降级原因：{attempt.downgradeReason}
             </div>
           ) : null}
-          <pre style={debugCodeBlockStyle}>{serializedAttempt}</pre>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                minWidth: 0,
+                padding: 12,
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-bg-subtle)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--color-primary)",
+                  paddingBottom: 8,
+                  borderBottom: "1px solid var(--color-border-light)",
+                }}
+              >
+                调用
+              </div>
+              {renderAttemptDebugBlock(
+                "请求头",
+                attempt.requestHeadersJson,
+                { accent: "var(--color-primary)" },
+              )}
+              {renderAttemptDebugBlock("请求体", attempt.requestBodyJson, {
+                accent: "var(--color-primary)",
+              })}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                minWidth: 0,
+                padding: 12,
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-bg-subtle)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--color-success)",
+                  paddingBottom: 8,
+                  borderBottom: "1px solid var(--color-border-light)",
+                }}
+              >
+                返回
+              </div>
+              {renderAttemptDebugBlock(
+                "响应头",
+                attempt.responseHeadersJson,
+                { accent: "var(--color-success)" },
+              )}
+              {renderAttemptDebugBlock("响应体", attempt.responseBodyJson, {
+                accent: "var(--color-success)",
+                showSseMerged: true,
+              })}
+              {attempt.rawErrorText
+                ? renderAttemptDebugBlock(
+                    "错误信息",
+                    attempt.rawErrorText,
+                    { plainText: true, accent: "var(--color-danger)" },
+                  )
+                : null}
+              {renderAttemptDebugBlock(
+                "内存写入",
+                attempt.memoryWriteJson,
+                { accent: "var(--color-text-muted)" },
+              )}
+            </div>
+          </div>
         </div>
       </DetailDisclosureCard>
     );
@@ -1492,10 +1658,35 @@ export default function ProxyLogs() {
   function renderStoredDebugDetails(
     title: string,
     value: unknown,
-    options?: { defaultOpen?: boolean; copyLabel?: string },
+    options?: {
+      defaultOpen?: boolean;
+      copyLabel?: string;
+      accent?: string;
+      showSseMerged?: boolean;
+    },
   ) {
     const normalized = parseStoredDebugPreview(value);
     const copyLabel = options?.copyLabel || title;
+    const accent = options?.accent;
+    const showSseMerged = options?.showSseMerged;
+
+    if (normalized.displayText === "-") {
+      return (
+        <DetailDisclosureCard title={title} defaultOpen={options?.defaultOpen}>
+          <div style={{ padding: 12 }}>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--color-text-muted)",
+                fontStyle: "italic",
+              }}
+            >
+              （空）
+            </div>
+          </div>
+        </DetailDisclosureCard>
+      );
+    }
 
     return (
       <DetailDisclosureCard title={title} defaultOpen={options?.defaultOpen}>
@@ -1523,7 +1714,19 @@ export default function ProxyLogs() {
               {normalized.note}
             </div>
           ) : null}
-          <pre style={debugCodeBlockStyle}>{normalized.displayText}</pre>
+          <HighlightedJson
+            code={normalized.displayText}
+            showSseMerged={showSseMerged}
+            style={{
+              ...debugCodeBlockStyle,
+              ...(accent
+                ? {
+                    borderLeft: `3px solid ${accent}`,
+                    paddingLeft: 14,
+                  }
+                : null),
+            }}
+          />
         </div>
       </DetailDisclosureCard>
     );
@@ -1596,35 +1799,91 @@ export default function ProxyLogs() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          {renderStoredDebugDetails(
-            "候选 endpoint",
-            traceDetail.endpointCandidatesJson,
-            {
-              copyLabel: "候选 endpoint",
-            },
-          )}
-          {renderStoredDebugDetails(
-            "原始下游请求头",
-            traceDetail.requestHeadersJson,
-            {
-              copyLabel: "原始下游请求头",
-            },
-          )}
-          {renderStoredDebugDetails(
-            "原始下游请求体",
-            traceDetail.requestBodyJson,
-            {
-              copyLabel: "原始下游请求体",
-            },
-          )}
-          {renderStoredDebugDetails(
-            "最终响应",
-            traceDetail.finalResponseBodyJson,
-            {
-              copyLabel: "最终响应",
-            },
-          )}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+            gap: 12,
+            alignItems: "start",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              minWidth: 0,
+              padding: 12,
+              borderRadius: "var(--radius-sm)",
+              background: "var(--color-bg-subtle)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: "var(--color-primary)",
+                paddingBottom: 8,
+                borderBottom: "1px solid var(--color-border-light)",
+              }}
+            >
+              调用
+            </div>
+            {renderStoredDebugDetails(
+              "候选 endpoint",
+              traceDetail.endpointCandidatesJson,
+              {
+                copyLabel: "候选 endpoint",
+                accent: "var(--color-primary)",
+              },
+            )}
+            {renderStoredDebugDetails(
+              "原始下游请求头",
+              traceDetail.requestHeadersJson,
+              {
+                copyLabel: "原始下游请求头",
+                accent: "var(--color-primary)",
+              },
+            )}
+            {renderStoredDebugDetails(
+              "原始下游请求体",
+              traceDetail.requestBodyJson,
+              {
+                copyLabel: "原始下游请求体",
+                accent: "var(--color-primary)",
+              },
+            )}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              minWidth: 0,
+              padding: 12,
+              borderRadius: "var(--radius-sm)",
+              background: "var(--color-bg-subtle)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: "var(--color-success)",
+                paddingBottom: 8,
+                borderBottom: "1px solid var(--color-border-light)",
+              }}
+            >
+              返回
+            </div>
+            {renderStoredDebugDetails(
+              "最终响应",
+              traceDetail.finalResponseBodyJson,
+              {
+                copyLabel: "最终响应",
+                accent: "var(--color-success)",
+                showSseMerged: true,
+              },
+            )}
+          </div>
         </div>
 
         <DetailDisclosureCard
@@ -1703,6 +1962,38 @@ export default function ProxyLogs() {
           placeholder="全部站点"
         />
       </div>
+      {accountFilter ? (
+        <div
+          className="proxy-logs-filter-select"
+          style={{ display: "flex", alignItems: "center" }}
+        >
+          <span
+            className="badge badge-info"
+            style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            连接 #{accountFilter}
+            <button
+              type="button"
+              aria-label="清除连接筛选"
+              onClick={() => {
+                setAccountFilter(null);
+                setPage(1);
+              }}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "inherit",
+                cursor: "pointer",
+                padding: 0,
+                lineHeight: 1,
+                fontSize: 13,
+              }}
+            >
+              ×
+            </button>
+          </span>
+        </div>
+      ) : null}
       <label className="proxy-logs-time-field">
         <span>开始</span>
         <input
@@ -2559,7 +2850,8 @@ export default function ProxyLogs() {
           open={showDebugTraceDetailModal}
           onClose={closeDebugTraceDetailModal}
           title={selectedDebugTraceListItem?.sessionId || "追踪详情"}
-          maxWidth={920}
+          width="min(96vw, 1080px)"
+          maxWidth={1120}
           closeOnBackdrop
           closeOnEscape
         >

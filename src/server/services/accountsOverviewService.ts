@@ -1,5 +1,6 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../config.js";
 import {
   getCredentialModeFromExtraConfig,
   hasOauthProvider,
@@ -10,18 +11,27 @@ import {
   type RuntimeHealthInfo,
 } from "./accountHealthService.js";
 import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
-import { getLocalDayRangeUtc } from "./localTimeService.js";
+import { getLocalDayRangeUtc, getLocalHourAnchor, getLocalHourRangeStartUtc } from "./localTimeService.js";
 import {
   readSnapshotCache,
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
+import {
+  buildAccountAvailabilitySummariesFromHourlyAggregates,
+  type AccountAvailabilitySummary,
+} from "./statsShared.js";
 
 export type AccountCapabilities = {
   canCheckin: boolean;
   canRefreshBalance: boolean;
   proxyOnly: boolean;
+};
+
+type AccountWithSiteRow = {
+  accounts: typeof schema.accounts.$inferSelect;
+  sites: typeof schema.sites.$inferSelect;
 };
 
 export type AccountOverviewRow = typeof schema.accounts.$inferSelect & {
@@ -31,6 +41,8 @@ export type AccountOverviewRow = typeof schema.accounts.$inferSelect & {
   todaySpend: number;
   todayReward: number;
   runtimeHealth: RuntimeHealthInfo;
+  availability: AccountAvailabilitySummary | null;
+  lastCallAt: string | null;
 };
 
 export type AccountsSnapshotPayload = {
@@ -111,7 +123,10 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
 
   const { localDay, startUtc, endUtc } = getLocalDayRangeUtc();
 
-  const [todaySpendRows, modelCountRows, todayCheckins] = await Promise.all([
+  const availabilityNow = getLocalHourAnchor();
+  const availabilitySinceUtc = getLocalHourRangeStartUtc(config.accountAvailabilityWindowHours, availabilityNow);
+
+  const [todaySpendRows, modelCountRows, todayCheckins, accountHourUsageRows, lastCallRows] = await Promise.all([
     db
       .select({
         accountId: schema.proxyLogs.accountId,
@@ -150,6 +165,28 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
         ),
       )
       .all(),
+    db
+      .select({
+        accountId: schema.accountHourUsage.accountId,
+        hourStartUtc: schema.accountHourUsage.bucketStartUtc,
+        totalRequests: schema.accountHourUsage.totalCalls,
+        successCount: schema.accountHourUsage.successCalls,
+        failedCount: schema.accountHourUsage.failedCalls,
+        totalLatencyMs: schema.accountHourUsage.totalLatencyMs,
+        latencyCount: schema.accountHourUsage.latencyCount,
+      })
+      .from(schema.accountHourUsage)
+      .where(gte(schema.accountHourUsage.bucketStartUtc, availabilitySinceUtc))
+      .all(),
+    db
+      .select({
+        accountId: schema.proxyLogs.accountId,
+        lastCallAt: sql<string>`max(${schema.proxyLogs.createdAt})`,
+      })
+      .from(schema.proxyLogs)
+      .where(sql`${schema.proxyLogs.accountId} is not null`)
+      .groupBy(schema.proxyLogs.accountId)
+      .all(),
   ]);
 
   const spendByAccount: Record<number, number> = {};
@@ -180,8 +217,22 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
       (parsedRewardCountByAccount[log.accountId] || 0) + 1;
   }
 
+  const lastCallByAccount: Record<number, string> = {};
+  for (const row of lastCallRows) {
+    if (row.accountId == null) continue;
+    const value = String(row.lastCallAt || "").trim();
+    if (value) lastCallByAccount[row.accountId] = value;
+  }
+
+  const accountIds = rows.map((row: AccountWithSiteRow) => row.accounts.id);
+  const availabilityByAccount = buildAccountAvailabilitySummariesFromHourlyAggregates(
+    accountIds,
+    accountHourUsageRows,
+    availabilityNow,
+  );
+
   return {
-    accounts: rows.map((row) => {
+    accounts: rows.map((row: AccountWithSiteRow) => {
       const credentialMode = resolveStoredCredentialMode(row.accounts);
       const capabilities = buildCapabilitiesForAccount(row.accounts);
       return {
@@ -210,6 +261,8 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
           sessionCapable: capabilities.canRefreshBalance,
           hasDiscoveredModels: (modelCountByAccount[row.accounts.id] || 0) > 0,
         }),
+        availability: availabilityByAccount.get(row.accounts.id) || null,
+        lastCallAt: lastCallByAccount[row.accounts.id] || null,
       };
     }),
     sites,
@@ -227,4 +280,152 @@ export async function getAccountsSnapshot(options?: {
     persistence: accountsSnapshotPersistence,
     loader: loadAccountsSnapshotPayload,
   });
+}
+
+export type AccountModelUsageRow = {
+  model: string;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  availabilityPercent: number | null;
+  averageLatencyMs: number | null;
+  lastCallAt: string | null;
+  totalTokens: number;
+  totalSpend: number;
+};
+
+export type AccountModelUsageResult = {
+  accountId: number;
+  windowHours: number;
+  windowStartUtc: string;
+  models: AccountModelUsageRow[];
+};
+
+type ModelUsageAccumulator = {
+  model: string;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  latencyTotalMs: number;
+  latencyCount: number;
+  lastCallAt: string | null;
+  totalTokens: number;
+  totalSpend: number;
+};
+
+export async function loadAccountModelUsage(
+  accountId: number,
+  hours?: number,
+): Promise<AccountModelUsageResult> {
+  const windowHours = Math.max(
+    1,
+    Math.trunc(
+      Number(hours || config.accountAvailabilityWindowHours) ||
+        config.accountAvailabilityWindowHours,
+    ),
+  );
+  const sinceUtc = getLocalHourRangeStartUtc(windowHours);
+
+  const rows = await db
+    .select({
+      modelActual: schema.proxyLogs.modelActual,
+      modelRequested: schema.proxyLogs.modelRequested,
+      total: sql<number>`count(*)`,
+      successCount: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
+      failedCount: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} is null or ${schema.proxyLogs.status} <> 'success' then 1 else 0 end), 0)`,
+      totalLatencyMs: sql<number>`coalesce(sum(${schema.proxyLogs.latencyMs}), 0)`,
+      latencyCount: sql<number>`sum(case when ${schema.proxyLogs.latencyMs} > 0 then 1 else 0 end)`,
+      lastCallAt: sql<string | null>`max(${schema.proxyLogs.createdAt})`,
+      totalTokens: sql<number>`coalesce(sum(${schema.proxyLogs.totalTokens}), 0)`,
+      totalSpend: sql<number>`coalesce(sum(${schema.proxyLogs.estimatedCost}), 0)`,
+    })
+    .from(schema.proxyLogs)
+    .where(
+      and(
+        eq(schema.proxyLogs.accountId, accountId),
+        gte(schema.proxyLogs.createdAt, sinceUtc),
+      ),
+    )
+    .groupBy(schema.proxyLogs.modelActual, schema.proxyLogs.modelRequested)
+    .all();
+
+  const byModel = new Map<string, ModelUsageAccumulator>();
+  for (const row of rows) {
+    const model =
+      String(row.modelActual || row.modelRequested || "unknown").trim() ||
+      "unknown";
+    const total = Math.max(0, Number(row.total || 0));
+    const successCount = Math.max(0, Number(row.successCount || 0));
+    const failedCount = Math.max(0, Number(row.failedCount || 0));
+    const totalLatencyMs = Math.max(0, Number(row.totalLatencyMs || 0));
+    const latencyCount = Math.max(0, Number(row.latencyCount || 0));
+    const totalTokens = Math.max(0, Number(row.totalTokens || 0));
+    const totalSpend = Math.max(0, Number(row.totalSpend || 0));
+    const lastCallAtRaw = row.lastCallAt;
+    const lastCallAt =
+      typeof lastCallAtRaw === "string" && lastCallAtRaw.trim().length > 0
+        ? lastCallAtRaw
+        : null;
+
+    const existing = byModel.get(model);
+    if (existing) {
+      existing.totalRequests += total;
+      existing.successCount += successCount;
+      existing.failedCount += failedCount;
+      existing.latencyTotalMs += totalLatencyMs;
+      existing.latencyCount += latencyCount;
+      existing.totalTokens += totalTokens;
+      existing.totalSpend += totalSpend;
+      if (lastCallAt && (!existing.lastCallAt || lastCallAt > existing.lastCallAt)) {
+        existing.lastCallAt = lastCallAt;
+      }
+    } else {
+      byModel.set(model, {
+        model,
+        totalRequests: total,
+        successCount,
+        failedCount,
+        latencyTotalMs: totalLatencyMs,
+        latencyCount,
+        lastCallAt,
+        totalTokens,
+        totalSpend,
+      });
+    }
+  }
+
+  const models: AccountModelUsageRow[] = Array.from(byModel.values()).map(
+    (row) => {
+      const availabilityPercent =
+        row.totalRequests > 0
+          ? Math.round((row.successCount / row.totalRequests) * 1000) / 10
+          : null;
+      const averageLatencyMs =
+        row.latencyCount > 0
+          ? Math.round(row.latencyTotalMs / row.latencyCount)
+          : null;
+      return {
+        model: row.model,
+        totalRequests: row.totalRequests,
+        successCount: row.successCount,
+        failedCount: row.failedCount,
+        availabilityPercent,
+        averageLatencyMs,
+        lastCallAt: row.lastCallAt,
+        totalTokens: row.totalTokens,
+        totalSpend: row.totalSpend,
+      };
+    },
+  );
+
+  models.sort(
+    (a, b) => b.totalRequests - a.totalRequests || a.model.localeCompare(b.model),
+  );
+
+  return {
+    accountId,
+    windowHours,
+    windowStartUtc: sinceUtc,
+    models,
+  };
 }

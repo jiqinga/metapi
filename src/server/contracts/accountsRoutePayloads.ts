@@ -65,7 +65,12 @@ const accountManualModelsPayloadSchema = z.object({
   models: z.array(z.string()).optional(),
 }).passthrough();
 
+const accountDisabledModelsPayloadSchema = z.object({
+  models: z.array(z.string()).optional(),
+}).passthrough();
+
 export type AccountBatchPayload = z.output<typeof accountBatchPayloadSchema>;
+export type AccountDisabledModelsPayload = z.output<typeof accountDisabledModelsPayloadSchema>;
 export type AccountCreatePayload = z.output<typeof accountCreatePayloadSchema>;
 export type AccountHealthRefreshPayload = z.output<typeof accountHealthRefreshPayloadSchema>;
 export type AccountLoginPayload = z.output<typeof accountLoginPayloadSchema>;
@@ -200,4 +205,9 @@ export function parseAccountVerifyTokenPayload(input: unknown):
 export function parseAccountManualModelsPayload(input: unknown):
 { success: true; data: AccountManualModelsPayload } | { success: false; error: string } {
   return parseAccountsPayload(accountManualModelsPayloadSchema, input);
+}
+
+export function parseAccountDisabledModelsPayload(input: unknown):
+{ success: true; data: AccountDisabledModelsPayload } | { success: false; error: string } {
+  return parseAccountsPayload(accountDisabledModelsPayloadSchema, input);
 }

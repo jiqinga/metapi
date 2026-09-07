@@ -14,6 +14,11 @@ const runtimeSettingsPayloadSchema = z.object({
   smtpSecure: z.boolean().optional(),
   logCleanupUsageLogsEnabled: z.boolean().optional(),
   logCleanupProgramLogsEnabled: z.boolean().optional(),
+  balanceRefreshModelsEnabled: z.boolean().optional(),
+  checkinEnabled: z.boolean().optional(),
+  balanceRefreshEnabled: z.boolean().optional(),
+  dailySummaryEnabled: z.boolean().optional(),
+  logCleanupEnabled: z.boolean().optional(),
 }).passthrough();
 
 const systemProxyTestPayloadSchema = z.object({
@@ -113,6 +118,21 @@ function formatSettingsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'logCleanupProgramLogsEnabled') {
     return '自动清理程序日志格式无效：需要 boolean';
+  }
+  if (firstPath === 'balanceRefreshModelsEnabled') {
+    return '余额刷新时同步刷新模型开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'checkinEnabled') {
+    return '签到定时任务开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'balanceRefreshEnabled') {
+    return '余额刷新定时任务开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'dailySummaryEnabled') {
+    return '每日汇总定时任务开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'logCleanupEnabled') {
+    return '日志清理定时任务开关格式无效：需要 boolean';
   }
   return 'Invalid settings payload.';
 }

@@ -9,6 +9,7 @@ import { installAccountsSnapshotCompat } from './testApiCompat.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAccounts: vi.fn(),
+    getAccountsQuery: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getSites: vi.fn(),
     getAccountTokens: vi.fn(),
@@ -23,6 +24,7 @@ async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
@@ -35,6 +37,8 @@ async function renderAccounts(
   apiMock.getAccounts.mockResolvedValue([]);
   apiMock.getSites.mockResolvedValue(sites);
   apiMock.getAccountTokens.mockResolvedValue([]);
+  // Ensure getAccountsQuery returns the paginated shape the component expects
+  apiMock.getAccountsQuery.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 50 });
 
   let root!: WebTestRenderer;
   await act(async () => {
@@ -47,6 +51,13 @@ async function renderAccounts(
     );
   });
   await flushMicrotasks();
+  // With getAccountsQuery, sites load via a separate getSites() call after
+  // the accounts query resolves — give that extra round a chance to settle.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
   return root!;
 }
 
@@ -68,7 +79,9 @@ describe('Accounts create intent handling', () => {
       expect(rendered).not.toContain('添加 API Key 连接');
 
       const selects = root.root.findAllByType(ModernSelect);
-      expect(selects[1]?.props.value).toBe('10');
+      // The add modal's site selector is the ModernSelect with value '10'
+      const siteSelect = selects.find((s: any) => s.props.value === '10');
+      expect(siteSelect).toBeDefined();
     } finally {
       root?.unmount();
     }
@@ -81,7 +94,8 @@ describe('Accounts create intent handling', () => {
       expect(rendered).toContain('添加 API Key 连接');
 
       const selects = root.root.findAllByType(ModernSelect);
-      expect(selects[1]?.props.value).toBe('10');
+      const siteSelect = selects.find((s: any) => s.props.value === '10');
+      expect(siteSelect).toBeDefined();
     } finally {
       root?.unmount();
     }
@@ -98,6 +112,8 @@ describe('Accounts create intent handling', () => {
         && typeof node.props.onClick === 'function'
         && typeof node.props.className === 'string'
         && node.props.className.includes('btn btn-primary')
+        && typeof node.props.children === 'string'
+        && node.props.children.includes('添加连接')
       ));
 
       await act(async () => {
@@ -106,9 +122,11 @@ describe('Accounts create intent handling', () => {
       await flushMicrotasks();
 
       const selects = root.root.findAllByType(ModernSelect);
-      expect(selects[1]?.props.searchable).toBe(true);
-      expect(selects[1]?.props.searchPlaceholder).toBe('筛选站点（名称 / 平台 / URL）');
-      expect(selects[1]?.props.options).toEqual(
+      // The add modal's site selector is the searchable one
+      const siteSelect = selects.find((s: any) => s.props.searchable);
+      expect(siteSelect?.props.searchable).toBe(true);
+      expect(siteSelect?.props.searchPlaceholder).toBe('筛选站点（名称 / 平台 / URL）');
+      expect(siteSelect?.props.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             value: '11',

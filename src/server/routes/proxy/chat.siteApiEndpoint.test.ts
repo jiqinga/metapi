@@ -4,7 +4,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
-import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
@@ -76,11 +75,13 @@ vi.mock('../../services/proxyLogStore.js', () => ({
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type ConfigModule = typeof import('../../config.js');
 
 describe('chat proxy site api endpoint rotation', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let config: ConfigModule['config'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -89,9 +90,11 @@ describe('chat proxy site api endpoint rotation', () => {
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
+    const configModule = await import('../../config.js');
     const routesModule = await import('./chat.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    config = configModule.config;
 
     app = Fastify();
     await app.register(routesModule.chatProxyRoute);

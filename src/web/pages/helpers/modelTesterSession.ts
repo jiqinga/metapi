@@ -153,6 +153,7 @@ export type ModelTesterSessionState = {
   showDebugPanel: boolean;
   activeDebugTab: DebugTab;
   modeState: ModelTesterModeState;
+  selectedSite?: string;
 };
 
 export type TestChatPayload = TesterProxyEnvelope;
@@ -895,23 +896,53 @@ const parsePendingPayload = (
   return null;
 };
 
-export const collectModelTesterModelNames = (
-  marketplace: { models?: Array<{ name?: unknown }>; } | null | undefined,
-  routes: Array<{ modelPattern?: unknown; enabled?: unknown; }> | null | undefined,
-): string[] => {
-  const result: string[] = [];
-  const seen = new Set<string>();
+export type ModelTesterModelEntry = {
+  name: string;
+  sites: string[];
+};
 
-  const appendModel = (rawName: unknown) => {
-    if (typeof rawName !== 'string') return;
-    const name = rawName.trim();
-    if (!name || seen.has(name)) return;
-    seen.add(name);
-    result.push(name);
+const collectSiteNames = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return [];
+  const sites: string[] = [];
+  for (const account of raw) {
+    if (!account || typeof account !== 'object') continue;
+    const site = (account as Record<string, unknown>).site;
+    if (typeof site !== 'string') continue;
+    const trimmed = site.trim();
+    if (trimmed && !sites.includes(trimmed)) sites.push(trimmed);
+  }
+  return sites;
+};
+
+export const collectModelTesterModelEntries = (
+  marketplace: {
+    models?: Array<{ name?: unknown; accounts?: unknown; }>;
+  } | null | undefined,
+  routes: Array<{ modelPattern?: unknown; enabled?: unknown; }> | null | undefined,
+): ModelTesterModelEntry[] => {
+  const entries: ModelTesterModelEntry[] = [];
+  const byName = new Map<string, ModelTesterModelEntry>();
+
+  const upsert = (name: string, sites: string[]): ModelTesterModelEntry => {
+    let entry = byName.get(name);
+    if (!entry) {
+      entry = { name, sites: [] };
+      byName.set(name, entry);
+      entries.push(entry);
+    }
+    for (const site of sites) {
+      if (!entry.sites.includes(site)) entry.sites.push(site);
+    }
+    return entry;
   };
 
   for (const item of marketplace?.models || []) {
-    appendModel(item?.name);
+    if (!item || typeof item !== 'object') continue;
+    const rawName = item.name;
+    if (typeof rawName !== 'string') continue;
+    const name = rawName.trim();
+    if (!name) continue;
+    upsert(name, collectSiteNames(item.accounts));
   }
 
   for (const route of routes || []) {
@@ -919,10 +950,32 @@ export const collectModelTesterModelNames = (
     if (typeof route.modelPattern !== 'string') continue;
     const modelPattern = route.modelPattern.trim();
     if (!modelPattern || !isExactModelPattern(modelPattern)) continue;
-    appendModel(modelPattern);
+    // Route-derived models carry no site association (sites: []).
+    // They only surface when no site filter is selected.
+    upsert(modelPattern, []);
   }
 
-  return result;
+  return entries;
+};
+
+export const collectModelTesterModelNames = (
+  marketplace: { models?: Array<{ name?: unknown }>; } | null | undefined,
+  routes: Array<{ modelPattern?: unknown; enabled?: unknown; }> | null | undefined,
+): string[] =>
+  collectModelTesterModelEntries(
+    marketplace as {
+      models?: Array<{ name?: unknown; accounts?: unknown }>;
+    } | null | undefined,
+    routes,
+  ).map((entry) => entry.name);
+
+const compareModelMatch = (
+  a: { name: string; matchIndex: number; index: number },
+  b: { name: string; matchIndex: number; index: number },
+): number => {
+  if (a.matchIndex !== b.matchIndex) return a.matchIndex - b.matchIndex;
+  if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+  return a.index - b.index;
 };
 
 export const filterModelTesterModelNames = (models: string[], query: string): string[] => {
@@ -936,12 +989,51 @@ export const filterModelTesterModelNames = (models: string[], query: string): st
       return { name, matchIndex, index };
     })
     .filter((item): item is { name: string; matchIndex: number; index: number } => item !== null)
-    .sort((a, b) => {
-      if (a.matchIndex !== b.matchIndex) return a.matchIndex - b.matchIndex;
-      if (a.name.length !== b.name.length) return a.name.length - b.name.length;
-      return a.index - b.index;
-    })
+    .sort(compareModelMatch)
     .map((item) => item.name);
+};
+
+export const filterModelTesterModelEntries = (
+  entries: ModelTesterModelEntry[],
+  options: { site?: string; query?: string },
+): ModelTesterModelEntry[] => {
+  const site = options.site?.trim() || '';
+  const keyword = options.query?.trim().toLowerCase() || '';
+
+  const matchesSite = (entry: ModelTesterModelEntry): boolean =>
+    !site || entry.sites.includes(site);
+
+  if (!keyword) {
+    return entries.filter(matchesSite);
+  }
+
+  return entries
+    .map((entry, index) => {
+      const matchIndex = entry.name.toLowerCase().indexOf(keyword);
+      if (matchIndex === -1) return null;
+      return { entry, matchIndex, index };
+    })
+    .filter((item): item is { entry: ModelTesterModelEntry; matchIndex: number; index: number } => item !== null)
+    .filter((item) => matchesSite(item.entry))
+    .sort((a, b) => compareModelMatch(
+      { name: a.entry.name, matchIndex: a.matchIndex, index: a.index },
+      { name: b.entry.name, matchIndex: b.matchIndex, index: b.index },
+    ))
+    .map((item) => item.entry);
+};
+
+export const collectModelTesterSiteNames = (entries: ModelTesterModelEntry[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of entries) {
+    for (const site of entry.sites) {
+      if (!seen.has(site)) {
+        seen.add(site);
+        result.push(site);
+      }
+    }
+  }
+  return result.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 };
 
 export const createMessage = (role: ChatRole, content: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -1169,6 +1261,7 @@ export const parseModelTesterSession = (raw: string | null): ModelTesterSessionS
       ? parsed.activeDebugTab as DebugTab
       : DEBUG_TABS.PREVIEW,
     modeState: parseModeState(parsed.modeState),
+    selectedSite: typeof parsed.selectedSite === 'string' ? parsed.selectedSite : '',
   };
 
   if (typeof parsed.pendingJobId === 'string' && parsed.pendingJobId.trim().length > 0) {

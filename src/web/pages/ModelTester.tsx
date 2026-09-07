@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api.js';
+import { api, setProxyTestTimeoutMs } from '../api.js';
 import { clearAuthSession, getAuthToken } from '../authSession.js';
 import {
   DEBUG_TABS,
@@ -20,12 +20,13 @@ import {
   buildVideoInspectRequestEnvelope,
   attachForcedChannelToEnvelope,
   countConversationTurns,
-  collectModelTesterModelNames,
+  collectModelTesterModelEntries,
+  collectModelTesterSiteNames,
   createLoadingAssistantMessage,
   createMessage,
   createConversationUserMessage,
   extractConversationUploadedFilesFromMessage,
-  filterModelTesterModelNames,
+  filterModelTesterModelEntries,
   finalizeIncompleteMessage,
   findLastLoadingAssistantIndex,
   parseCustomRequestBody,
@@ -42,6 +43,7 @@ import {
   type DebugTab,
   type ModelTesterInputs,
   type ModelTesterModeState,
+  type ModelTesterModelEntry,
     type ParameterEnabled,
     type PlaygroundMode,
     type PlaygroundProtocol,
@@ -87,6 +89,7 @@ type ForcedChannelOption = {
   value: string;
   label: string;
   description?: string;
+  siteName?: string;
 };
 
 const POLL_INTERVAL_MS = 1200;
@@ -237,8 +240,15 @@ const extractResponsesContent = (result: any): { content: string; reasoningConte
   };
 };
 
+const unwrapDataEnvelope = (data: any): any => {
+  if (data && typeof data === 'object' && data.data && !data.choices && !data.type && !data.object && !data.candidates && !data.error) {
+    return data.data;
+  }
+  return data;
+};
+
 const extractAssistantResult = (result: unknown): { content: string; reasoningContent: string } => {
-  const data = result as any;
+  const data = unwrapDataEnvelope(result as any);
   let content = '';
   let reasoning = '';
 
@@ -463,8 +473,9 @@ const parseAnyStreamDelta = (eventPayload: any): {
 } => {
   if (!eventPayload || typeof eventPayload !== 'object') return {};
 
-  if (Array.isArray(eventPayload.choices)) {
-    const choice = eventPayload.choices[0];
+  const unwrapped = unwrapDataEnvelope(eventPayload);
+  if (Array.isArray(unwrapped.choices)) {
+    const choice = unwrapped.choices[0];
     const delta = choice?.delta || {};
     const reasoningDelta = typeof delta.reasoning_content === 'string'
       ? delta.reasoning_content
@@ -484,20 +495,20 @@ const parseAnyStreamDelta = (eventPayload: any): {
     };
   }
 
-  if (typeof eventPayload.type === 'string') {
+  if (typeof unwrapped.type === 'string') {
     // Responses stream emits a full-text summary again in several "done" events
     // (output_text.done/content_part.done/output_item.done/response.completed).
     // Treat those as structural events only; otherwise UI appends duplicate text.
-    if (eventPayload.type === 'response.output_item.added' || eventPayload.type === 'response.output_item.done') {
+    if (unwrapped.type === 'response.output_item.added' || unwrapped.type === 'response.output_item.done') {
       return {};
     }
 
-    if (eventPayload.type === 'response.content_part.added' || eventPayload.type === 'response.content_part.done') {
+    if (unwrapped.type === 'response.content_part.added' || unwrapped.type === 'response.content_part.done') {
       return {};
     }
 
-    if (eventPayload.type === 'response.content_part.delta') {
-      const delta = eventPayload.delta;
+    if (unwrapped.type === 'response.content_part.delta') {
+      const delta = unwrapped.delta;
       if (typeof delta === 'string') return { contentDelta: delta || undefined };
       if (delta && typeof delta === 'object') {
         const parsed = extractResponsesContent(delta);
@@ -512,32 +523,32 @@ const parseAnyStreamDelta = (eventPayload: any): {
       }
     }
 
-    if (eventPayload.type === 'response.output_text.delta') {
-      const text = typeof eventPayload.delta === 'string'
-        ? eventPayload.delta
-        : typeof eventPayload.text === 'string'
-          ? eventPayload.text
+    if (unwrapped.type === 'response.output_text.delta') {
+      const text = typeof unwrapped.delta === 'string'
+        ? unwrapped.delta
+        : typeof unwrapped.text === 'string'
+          ? unwrapped.text
           : '';
       return { contentDelta: text || undefined };
     }
 
-    if (eventPayload.type === 'response.reasoning_summary_text.delta' || eventPayload.type === 'response.reasoning.delta') {
-      const text = typeof eventPayload.delta === 'string'
-        ? eventPayload.delta
-        : typeof eventPayload.text === 'string'
-          ? eventPayload.text
+    if (unwrapped.type === 'response.reasoning_summary_text.delta' || unwrapped.type === 'response.reasoning.delta') {
+      const text = typeof unwrapped.delta === 'string'
+        ? unwrapped.delta
+        : typeof unwrapped.text === 'string'
+          ? unwrapped.text
           : '';
       return { reasoningDelta: text || undefined };
     }
 
-    if (eventPayload.type === 'response.output_text.done') return {};
+    if (unwrapped.type === 'response.output_text.done') return {};
 
-    if (eventPayload.type === 'response.completed' || eventPayload.type === 'response.failed') {
+    if (unwrapped.type === 'response.completed' || unwrapped.type === 'response.failed') {
       return { done: true };
     }
 
-    if (eventPayload.type === 'content_block_delta') {
-      const delta = eventPayload.delta || {};
+    if (unwrapped.type === 'content_block_delta') {
+      const delta = unwrapped.delta || {};
       const deltaType = typeof delta.type === 'string' ? delta.type : '';
       const text = typeof delta.text === 'string' ? delta.text : '';
       if (deltaType === 'thinking_delta') {
@@ -546,24 +557,24 @@ const parseAnyStreamDelta = (eventPayload: any): {
       return { contentDelta: text || undefined };
     }
 
-    if (eventPayload.type === 'content_block_start') {
-      const block = eventPayload.content_block || {};
+    if (unwrapped.type === 'content_block_start') {
+      const block = unwrapped.content_block || {};
       const text = typeof block.text === 'string' ? block.text : '';
       return { contentDelta: text || undefined };
     }
 
-    if (eventPayload.type === 'message_delta') {
-      const stopReason = eventPayload?.delta?.stop_reason || eventPayload?.stop_reason;
+    if (unwrapped.type === 'message_delta') {
+      const stopReason = unwrapped?.delta?.stop_reason || unwrapped?.stop_reason;
       return { done: Boolean(stopReason) };
     }
 
-    if (eventPayload.type === 'message_stop') {
+    if (unwrapped.type === 'message_stop') {
       return { done: true };
     }
   }
 
-  if (Array.isArray(eventPayload.candidates)) {
-    const parts = eventPayload?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(unwrapped.candidates)) {
+    const parts = unwrapped?.candidates?.[0]?.content?.parts;
     if (Array.isArray(parts)) {
       const reasoningDelta = parts
         .filter((item: any) => item?.thought === true)
@@ -576,7 +587,7 @@ const parseAnyStreamDelta = (eventPayload: any): {
       return {
         contentDelta: contentDelta || undefined,
         reasoningDelta: reasoningDelta || undefined,
-        done: Boolean(eventPayload?.candidates?.[0]?.finishReason),
+        done: Boolean(unwrapped?.candidates?.[0]?.finishReason),
       };
     }
   }
@@ -658,8 +669,9 @@ function ParameterRow(props: {
 
 export default function ModelTester() {
   const isMobile = useIsMobile();
-  const [models, setModels] = useState<string[]>([]);
+  const [modelEntries, setModelEntries] = useState<ModelTesterModelEntry[]>([]);
   const [modelSearch, setModelSearch] = useState('');
+  const [selectedSite, setSelectedSite] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [inputs, setInputs] = useState<ModelTesterInputs>(DEFAULT_INPUTS);
@@ -700,6 +712,7 @@ export default function ModelTester() {
   const [imageSourceFile, setImageSourceFile] = useState<UploadState | null>(null);
   const [imageMaskFile, setImageMaskFile] = useState<UploadState | null>(null);
   const [conversationFiles, setConversationFiles] = useState<ConversationFileState[]>([]);
+  const [playgroundTimeoutMs, setPlaygroundTimeoutMs] = useState<number>(30000);
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -807,19 +820,31 @@ export default function ModelTester() {
           throw marketResult.reason || routesResult.reason || new Error('failed to fetch models');
         }
 
-        const names = collectModelTesterModelNames(
+        const entries = collectModelTesterModelEntries(
           marketResult.status === 'fulfilled' ? marketResult.value : null,
           routesResult.status === 'fulfilled' ? routesResult.value : null,
         );
-        setModels(names);
+        setModelEntries(entries);
+        const names = entries.map((entry) => entry.name);
+
+        const restoredSite = restoredSessionRef.current?.selectedSite || '';
+        const siteNames = collectModelTesterSiteNames(entries);
+        const nextSite = restoredSite && siteNames.includes(restoredSite)
+          ? restoredSite
+          : '';
 
         const restoredModel = restoredSessionRef.current?.inputs.model || '';
         const currentModel = inputs.model || '';
-        const nextModel = restoredModel && names.includes(restoredModel)
+        const modelPool = nextSite
+          ? filterModelTesterModelEntries(entries, { site: nextSite }).map((e) => e.name)
+          : names;
+        const nextModel = restoredModel && modelPool.includes(restoredModel)
           ? restoredModel
-          : currentModel && names.includes(currentModel)
+          : currentModel && modelPool.includes(currentModel)
             ? currentModel
-            : names[0] || '';
+            : modelPool[0] || '';
+
+        setSelectedSite(nextSite);
 
         if (nextModel) {
           setInputs((prev) => ({ ...prev, model: nextModel }));
@@ -835,6 +860,25 @@ export default function ModelTester() {
 
     void fetchModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTimeoutSetting = async () => {
+      try {
+        const runtimeInfo = await api.getRuntimeSettings();
+        if (cancelled) return;
+        const ms = Number(runtimeInfo.proxyTestTimeoutMs);
+        if (Number.isFinite(ms) && ms >= 3000) {
+          setPlaygroundTimeoutMs(Math.trunc(ms));
+          setProxyTestTimeoutMs(Math.trunc(ms));
+        }
+      } catch {
+        // keep default timeout if settings unavailable
+      }
+    };
+    void fetchTimeoutSetting();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -879,6 +923,7 @@ export default function ModelTester() {
             description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
               ? candidate.reason
               : undefined,
+            siteName: typeof candidate.siteName === 'string' ? candidate.siteName : undefined,
           }));
         setForcedChannelOptions(nextOptions);
         if (nextOptions.length === 0) {
@@ -902,6 +947,33 @@ export default function ModelTester() {
       cancelled = true;
     };
   }, [customRequestMode, forcedChannelHydrationReady, inputs.mode, inputs.model]);
+
+  // When a site is selected, auto-pin the request to a channel within that site.
+  // Manual pins with no site selected are preserved — clearing the site is handled
+  // in the site onChange handler, not here.
+  useEffect(() => {
+    if (!forcedChannelHydrationReady) return;
+    if (loadingForcedChannels) return;
+    if (customRequestMode || inputs.mode === 'videos.inspect') return;
+
+    const siteSelected = selectedSite.trim() !== '';
+    if (!siteSelected) return;
+
+    const siteChannels = forcedChannelOptions.filter((option) => option.siteName === selectedSite);
+    if (siteChannels.length === 0) {
+      if (forcedChannelId !== null) setForcedChannelId(null);
+      return;
+    }
+
+    const currentInSite = typeof forcedChannelId === 'number'
+      && siteChannels.some((option) => option.value === String(forcedChannelId));
+    if (currentInSite) return;
+
+    const parsed = Number.parseInt(siteChannels[0].value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      setForcedChannelId(parsed);
+    }
+  }, [selectedSite, forcedChannelOptions, loadingForcedChannels, forcedChannelHydrationReady, customRequestMode, inputs.mode, forcedChannelId]);
 
   useEffect(() => {
     if (!inputs.model) return;
@@ -929,6 +1001,7 @@ export default function ModelTester() {
       customRequestBody,
       showDebugPanel,
       activeDebugTab,
+      selectedSite,
     }));
   }, [
     activeDebugTab,
@@ -949,6 +1022,7 @@ export default function ModelTester() {
     searchAllowedDomains,
     searchBlockedDomains,
     searchQueryValue,
+    selectedSite,
     showDebugPanel,
     videoInspectId,
   ]);
@@ -1239,14 +1313,20 @@ export default function ModelTester() {
     };
   }, [buildApiPayload, buildClaudeBodyFromMessages, buildConversationMessagesWithSystem, buildResponsesBodyFromMessages, customRequestBody, customRequestMode, inputs, parameterEnabled]);
 
-  const forcedChannelSelectOptions = useMemo<ForcedChannelOption[]>(() => [
-    {
-      value: '__auto__',
-      label: '自动选路（默认）',
-      description: '按当前路由正常选择通道',
-    },
-    ...forcedChannelOptions,
-  ], [forcedChannelOptions]);
+  const forcedChannelSelectOptions = useMemo<ForcedChannelOption[]>(() => {
+    const siteSelected = selectedSite.trim() !== '';
+    const siteChannels = siteSelected
+      ? forcedChannelOptions.filter((option) => option.siteName === selectedSite)
+      : forcedChannelOptions;
+    return [
+      ...(siteSelected ? [] : [{
+        value: '__auto__',
+        label: '自动选路（默认）',
+        description: '按当前路由正常选择通道',
+      }]),
+      ...siteChannels,
+    ];
+  }, [forcedChannelOptions, selectedSite]);
 
   const attachEnvelopeForcedChannel = useCallback((envelope: ProxyTestEnvelope) => (
     attachForcedChannelToEnvelope(envelope, forcedChannelId)
@@ -1480,22 +1560,34 @@ export default function ModelTester() {
   }, [messages]);
 
   const turnCount = useMemo(() => countConversationTurns(messages), [messages]);
+  const siteOptions = useMemo(
+    () => {
+      const names = collectModelTesterSiteNames(modelEntries);
+      return [{ value: '', label: '全部站点' }, ...names.map((name) => ({ value: name, label: name }))];
+    },
+    [modelEntries],
+  );
+  const filteredModelEntries = useMemo(
+    () => filterModelTesterModelEntries(modelEntries, { site: selectedSite, query: modelSearch }),
+    [modelEntries, modelSearch, selectedSite],
+  );
   const filteredModels = useMemo(
-    () => filterModelTesterModelNames(models, modelSearch),
-    [modelSearch, models],
+    () => filteredModelEntries.map((entry) => entry.name),
+    [filteredModelEntries],
   );
   const currentModelVisible = useMemo(
     () => filteredModels.includes(inputs.model),
     [filteredModels, inputs.model],
   );
   const modelCountText = useMemo(() => {
-    if (!modelSearch.trim()) return `共 ${models.length} 个模型`;
-    return `匹配 ${filteredModels.length} / ${models.length}`;
-  }, [filteredModels.length, modelSearch, models.length]);
+    const total = modelEntries.length;
+    if (!selectedSite && !modelSearch.trim()) return `共 ${total} 个模型`;
+    return `匹配 ${filteredModels.length} / ${total}`;
+  }, [filteredModels.length, modelEntries.length, modelSearch, selectedSite]);
 
   const modelSelectOptions = useMemo(
-    () => filteredModels.map((item) => ({ value: item, label: item })),
-    [filteredModels],
+    () => filteredModelEntries.map((item) => ({ value: item.name, label: item.name })),
+    [filteredModelEntries],
   );
   const canSend = useMemo(() => {
     if (sending || pendingJobId || !inputs.model) return false;
@@ -2349,7 +2441,7 @@ export default function ModelTester() {
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }} className="animate-slide-up stagger-1">
         <div className="stat-summary-card stat-summary-purple">
           <div className="stat-summary-card-label">模型数量</div>
-          <div className="stat-summary-card-value">{models.length}</div>
+          <div className="stat-summary-card-value">{modelEntries.length}</div>
         </div>
         <div className="stat-summary-card stat-summary-blue">
           <div className="stat-summary-card-label">当前模型</div>
@@ -2405,6 +2497,33 @@ export default function ModelTester() {
           </div>
 
           <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>站点</div>
+            <ModernSelect
+              value={selectedSite}
+              onChange={(next) => {
+                const site = next || '';
+                setSelectedSite(site);
+                if (!site) {
+                  // Clearing the site resets any auto-pinned channel back to auto routing.
+                  setForcedChannelId(null);
+                }
+                if (inputs.model) {
+                  const stillVisible = filterModelTesterModelEntries(modelEntries, { site, query: modelSearch })
+                    .some((entry) => entry.name === inputs.model);
+                  if (!stillVisible) {
+                    const first = filterModelTesterModelEntries(modelEntries, { site, query: modelSearch })[0];
+                    updateInput('model', first?.name || '');
+                  }
+                }
+              }}
+              options={siteOptions}
+              placeholder="全部站点"
+              disabled={modelEntries.length === 0}
+              menuMaxHeight={240}
+            />
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>模型</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexDirection: isMobile ? 'column' : 'row' }}>
               <input
@@ -2416,7 +2535,7 @@ export default function ModelTester() {
                   flex: 1,
                   marginBottom: 0,
                 }}
-                disabled={models.length === 0}
+                disabled={modelEntries.length === 0}
               />
               <button
                 type="button"
@@ -2441,11 +2560,11 @@ export default function ModelTester() {
               placeholder={
                 !currentModelVisible && !!inputs.model
                   ? `当前模型已被筛选：${inputs.model}`
-                  : (models.length === 0
+                  : (modelEntries.length === 0
                     ? '暂无模型'
                     : (filteredModels.length === 0 ? '未找到匹配模型' : '请选择模型'))
               }
-              disabled={models.length === 0 || customRequestMode || filteredModels.length === 0}
+              disabled={modelEntries.length === 0 || customRequestMode || filteredModels.length === 0}
               emptyLabel="未找到匹配模型"
               menuMaxHeight={300}
             />
@@ -2494,7 +2613,7 @@ export default function ModelTester() {
                 setForcedChannelId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
               }}
               options={forcedChannelSelectOptions}
-              placeholder={loadingForcedChannels ? '加载通道中...' : '自动选路（默认）'}
+              placeholder={loadingForcedChannels ? '加载通道中...' : (selectedSite.trim() ? '请选择该站点的通道' : '自动选路（默认）')}
               disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedChannels}
               emptyLabel="当前模型暂无可固定通道"
               menuMaxHeight={300}
@@ -2502,8 +2621,12 @@ export default function ModelTester() {
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
               {forcedChannelHint
                 || (typeof forcedChannelId === 'number'
-                  ? `已固定到通道 #${forcedChannelId}，失败不会自动切换。`
-                  : '默认自动选路；如需单独排查，可固定到一个候选通道。')}
+                  ? (selectedSite.trim()
+                    ? `已固定到站点 ${selectedSite} 的通道 #${forcedChannelId}，失败不会自动切换。`
+                    : `已固定到通道 #${forcedChannelId}，失败不会自动切换。`)
+                  : (selectedSite.trim()
+                    ? `已固定到站点 ${selectedSite}；如该通道不可用可在下拉中切换同站点其他通道。`
+                    : '默认自动选路；如需单独排查，可固定到一个候选通道。'))}
             </div>
           </div>
 
@@ -2708,6 +2831,46 @@ export default function ModelTester() {
               disabled={!parameterEnabled.seed || customRequestMode}
             />
           </ParameterRow>
+
+          <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-card)' }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+              请求超时（毫秒）
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="number"
+                min={3000}
+                step={1000}
+                value={playgroundTimeoutMs}
+                onChange={(e) => {
+                  const nextValue = Number(e.target.value);
+                  if (Number.isFinite(nextValue) && nextValue >= 3000) {
+                    const ms = Math.trunc(nextValue);
+                    setPlaygroundTimeoutMs(ms);
+                    setProxyTestTimeoutMs(ms);
+                  }
+                }}
+                style={{ ...inputBaseStyle, flex: 1 }}
+              />
+              <button
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+                onClick={async () => {
+                  try {
+                    await api.updateRuntimeSettings({ proxyTestTimeoutMs: playgroundTimeoutMs });
+                    pushDebug('info', `请求超时已保存为 ${playgroundTimeoutMs}ms`);
+                  } catch {
+                    pushDebug('error', '保存请求超时失败');
+                  }
+                }}
+              >
+                保存
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6, marginTop: 6 }}>
+              修改即时生效，点保存可持久化到设置。长耗时任务（图像/视频/任务模式）固定 150s 不受此项限制。
+            </div>
+          </div>
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden', minHeight: isMobile ? 'auto' : 680, maxHeight: isMobile ? 'none' : 740, display: 'flex', flexDirection: 'column', order: isMobile ? 1 : 0 }}>

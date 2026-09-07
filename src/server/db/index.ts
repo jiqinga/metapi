@@ -54,6 +54,7 @@ let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
 let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 let proxyLogClientColumnsAvailable: boolean | null = null;
 let proxyLogStreamTimingColumnsAvailable: boolean | null = null;
+let proxyLogUpstreamEndpointColumnAvailable: boolean | null = null;
 
 function buildMysqlPoolOptions(
   connectionString = config.dbUrl,
@@ -125,8 +126,12 @@ function resolveVitestSqlitePath(): string | null {
   if ((process.env.DB_URL || '').trim()) {
     return null;
   }
-  if ((process.env.DATA_DIR || '').trim() && !isDefaultRepoDataDir(process.env.DATA_DIR)) {
-    return null;
+  const dataDir = (process.env.DATA_DIR || '').trim();
+  if (dataDir && !isDefaultRepoDataDir(dataDir)) {
+    // The test set an explicit DATA_DIR. Honor the live env var directly instead of
+    // falling back to config.dataDir, which may have been frozen to './data' by a
+    // transitive static import of config.js before beforeAll set DATA_DIR.
+    return resolve(dataDir, 'hub.db');
   }
 
   const workerTag = process.env.VITEST_POOL_ID
@@ -697,6 +702,18 @@ function ensureProxyLogStreamTimingSchema() {
   proxyLogStreamTimingColumnsAvailable = true;
 }
 
+function ensureProxyLogUpstreamEndpointSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'upstream_endpoint')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN upstream_endpoint text;');
+  }
+
+  proxyLogUpstreamEndpointColumnAvailable = true;
+}
+
 function normalizeSchemaErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error && 'message' in error) {
     return String((error as { message?: unknown }).message || '');
@@ -1117,11 +1134,78 @@ export async function ensureProxyLogStreamTimingColumns(): Promise<boolean> {
   }
 }
 
+export async function hasProxyLogUpstreamEndpointColumn(): Promise<boolean> {
+  if (proxyLogUpstreamEndpointColumnAvailable !== null) {
+    return proxyLogUpstreamEndpointColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogUpstreamEndpointColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'upstream_endpoint');
+    return proxyLogUpstreamEndpointColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', ['upstream_endpoint']);
+    proxyLogUpstreamEndpointColumnAvailable = Array.isArray(rows) && rows.length > 0;
+    return proxyLogUpstreamEndpointColumnAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+    ['proxy_logs', 'upstream_endpoint'],
+  );
+  proxyLogUpstreamEndpointColumnAvailable = Number(result.rowCount || 0) > 0;
+  return proxyLogUpstreamEndpointColumnAvailable;
+}
+
+export async function ensureProxyLogUpstreamEndpointColumn(): Promise<boolean> {
+  if (runtimeDbDialect === 'sqlite') {
+    ensureProxyLogUpstreamEndpointSchema();
+    proxyLogUpstreamEndpointColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'upstream_endpoint');
+    return proxyLogUpstreamEndpointColumnAvailable;
+  }
+
+  if (await hasProxyLogUpstreamEndpointColumn()) {
+    return true;
+  }
+
+  try {
+    if (runtimeDbDialect === 'mysql') {
+      if (!mysqlPool) return false;
+      await executeLegacyCompat(
+        (statement) => mysqlPool!.query(statement).then(() => undefined),
+        'ALTER TABLE `proxy_logs` ADD COLUMN `upstream_endpoint` TEXT NULL',
+      );
+    } else {
+      if (!pgPool) return false;
+      await executeLegacyCompat(
+        (statement) => pgPool!.query(statement).then(() => undefined),
+        'ALTER TABLE "proxy_logs" ADD COLUMN "upstream_endpoint" TEXT',
+      );
+    }
+    proxyLogUpstreamEndpointColumnAvailable = true;
+    return true;
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      proxyLogUpstreamEndpointColumnAvailable = true;
+      return true;
+    }
+    proxyLogUpstreamEndpointColumnAvailable = false;
+    console.warn('[db] failed to ensure proxy_logs.upstream_endpoint column', error);
+    return false;
+  }
+}
+
 function resetSchemaCapabilityCache() {
   proxyLogBillingDetailsColumnAvailable = null;
   proxyLogDownstreamApiKeyIdColumnAvailable = null;
   proxyLogClientColumnsAvailable = null;
   proxyLogStreamTimingColumnsAvailable = null;
+  proxyLogUpstreamEndpointColumnAvailable = null;
 }
 
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {

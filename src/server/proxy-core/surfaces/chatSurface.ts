@@ -21,7 +21,7 @@ import {
   ensureModelAllowedForDownstreamKey,
   getDownstreamRoutingPolicy,
   recordDownstreamCostUsage,
-} from '../../routes/proxy/downstreamPolicy.js';
+} from '../downstreamPolicyRequest.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { detectProxyFailure } from '../../services/proxyFailureJudge.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
@@ -423,6 +423,7 @@ export async function handleChatSurfaceRequest(
           forceNormalizeClaudeBody: options.forceNormalizeClaudeBody,
           downstreamHeaders: request.headers as Record<string, unknown>,
           providerHeaders: buildProviderHeaders(),
+          accountExtraConfig: selected.account.extraConfig,
           codexSessionCacheKey,
         });
         return {
@@ -1391,6 +1392,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         sitePlatform: selected.site.platform,
         claudeBody: rawBody,
         downstreamHeaders: request.headers as Record<string, unknown>,
+        accountExtraConfig: selected.account.extraConfig,
       });
       return {
         endpoint: 'messages' as const,

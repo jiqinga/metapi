@@ -16,7 +16,7 @@ describe('Login surface', () => {
   });
 
   it('uses the author github profile for the login github shortcut', () => {
-    expect(SITE_GITHUB_URL).toBe('https://github.com/cita-777');
+    expect(SITE_GITHUB_URL).toBe('https://github.com/jiqinga');
   });
 
   it('renders a poster-style hero with a floating admin login panel', () => {

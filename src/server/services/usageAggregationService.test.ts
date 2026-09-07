@@ -10,6 +10,7 @@ type ProjectorModule = typeof import("./usageAggregationService.js");
 
 describe("usageAggregationService", () => {
   let db: DbModule["db"];
+  let closeDbConnections: DbModule["closeDbConnections"];
   let schema: DbModule["schema"];
   let runUsageAggregationProjectionPass: ProjectorModule["runUsageAggregationProjectionPass"];
   let requestUsageAggregatesRecompute: ProjectorModule["requestUsageAggregatesRecompute"];
@@ -25,6 +26,7 @@ describe("usageAggregationService", () => {
     const dbModule = await import("../db/index.js");
     const projectorModule = await import("./usageAggregationService.js");
     db = dbModule.db;
+    closeDbConnections = dbModule.closeDbConnections;
     schema = dbModule.schema;
     runUsageAggregationProjectionPass = projectorModule.runUsageAggregationProjectionPass;
     requestUsageAggregatesRecompute = projectorModule.requestUsageAggregatesRecompute;
@@ -34,18 +36,20 @@ describe("usageAggregationService", () => {
     await db.delete(schema.analyticsProjectionCheckpoints).run();
     await db.delete(schema.modelDayUsage).run();
     await db.delete(schema.siteHourUsage).run();
+    await db.delete(schema.accountHourUsage).run();
     await db.delete(schema.siteDayUsage).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     if (previousDataDir === undefined) {
       delete process.env.DATA_DIR;
     } else {
       process.env.DATA_DIR = previousDataDir;
     }
+    await closeDbConnections();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -122,6 +126,19 @@ describe("usageAggregationService", () => {
       }),
     );
 
+    const accountHourRows = await db.select().from(schema.accountHourUsage).all();
+    expect(accountHourRows).toHaveLength(1);
+    expect(accountHourRows[0]).toEqual(
+      expect.objectContaining({
+        accountId: account.id,
+        totalCalls: 2,
+        successCalls: 1,
+        failedCalls: 1,
+        totalLatencyMs: 200,
+        latencyCount: 2,
+      }),
+    );
+
     const modelRows = await db.select().from(schema.modelDayUsage).all();
     expect(modelRows).toHaveLength(2);
 
@@ -152,6 +169,16 @@ describe("usageAggregationService", () => {
     expect(updatedDayRows[0].totalSummarySpend).toBeCloseTo(0.34, 6);
     expect(updatedDayRows[0].totalSiteSpend).toBeCloseTo(0.34, 6);
 
+    const updatedAccountHourRows = await db.select().from(schema.accountHourUsage).all();
+    expect(updatedAccountHourRows[0]).toEqual(
+      expect.objectContaining({
+        accountId: account.id,
+        totalCalls: 3,
+        successCalls: 2,
+        failedCalls: 1,
+      }),
+    );
+
     await requestUsageAggregatesRecompute(1);
     const recomputePass = await runUsageAggregationProjectionPass();
     expect(recomputePass.recomputed).toBe(true);
@@ -168,6 +195,17 @@ describe("usageAggregationService", () => {
     );
     expect(recomputedDayRows[0].totalSummarySpend).toBeCloseTo(0.34, 6);
     expect(recomputedDayRows[0].totalSiteSpend).toBeCloseTo(0.34, 6);
+
+    const recomputedAccountHourRows = await db.select().from(schema.accountHourUsage).all();
+    expect(recomputedAccountHourRows).toHaveLength(1);
+    expect(recomputedAccountHourRows[0]).toEqual(
+      expect.objectContaining({
+        accountId: account.id,
+        totalCalls: 3,
+        successCalls: 2,
+        failedCalls: 1,
+      }),
+    );
   });
 
   it("skips projection while another process lease is active and clears lease after success", async () => {

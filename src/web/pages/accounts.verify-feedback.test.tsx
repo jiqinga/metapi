@@ -14,6 +14,7 @@ import {
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAccounts: vi.fn(),
+    getAccountsQuery: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getSites: vi.fn(),
     verifyToken: vi.fn(),
@@ -74,6 +75,8 @@ describe('Accounts verify feedback', () => {
         && typeof node.props.onClick === 'function'
         && typeof node.props.className === 'string'
         && node.props.className.includes('btn btn-primary')
+        && typeof node.props.children === 'string'
+        && node.props.children.includes('添加连接')
       ));
 
       await act(async () => {
@@ -84,8 +87,11 @@ describe('Accounts verify feedback', () => {
       const selects = root.root.findAllByType(ModernSelect);
       expect(selects.length).toBeGreaterThan(1);
 
+      const modalSiteSelect = selects.find(
+        (s) => s.props.placeholder === '选择站点',
+      )!;
       await act(async () => {
-        selects[1]!.props.onChange('10');
+        modalSiteSelect.props.onChange('10');
       });
 
       const textareas = root.root.findAll((node) => node.type === 'textarea');

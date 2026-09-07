@@ -13,6 +13,10 @@ import Sites from './Sites.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getSites: vi.fn(),
+    getSitesQuery: vi.fn().mockImplementation(async (...args: any[]) => {
+      const items = await apiMock.getSites(...args);
+      return { items, total: Array.isArray(items) ? items.length : 0 };
+    }),
     addSite: vi.fn(),
     getSiteDisabledModels: vi.fn().mockResolvedValue({ models: [] }),
     getSiteAvailableModels: vi.fn().mockResolvedValue({ models: [] }),
@@ -52,6 +56,12 @@ function findClickableButtonByText(root: ReactTestRenderer, label: string) {
     && node.props['aria-label'] !== '关闭弹框'
     && collectText(node).includes(label)
   ));
+}
+
+function findPlatformSelect(root: ReactTestRenderer) {
+  return root.root.findAllByType(ModernSelect).find(
+    (s) => s.props['data-testid'] === 'site-platform-select',
+  );
 }
 
 function LocationProbe() {
@@ -101,8 +111,7 @@ async function createSiteAndClickModalChoice(
       node.type === 'input'
       && node.props['data-testid'] === 'site-primary-url-input'
     ));
-    const selects = root.root.findAllByType(ModernSelect);
-    const platformSelect = selects.at(-1);
+    const platformSelect = findPlatformSelect(root);
     const saveButton = root.root.find((node) => (
       node.type === 'button'
       && typeof node.props.onClick === 'function'
@@ -260,8 +269,7 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      const selects = root.root.findAllByType(ModernSelect);
-      const platformSelect = selects.at(-1);
+      const platformSelect = findPlatformSelect(root);
       expect(platformSelect?.props.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ label: '阿里云 CodingPlan / OpenAI' }),
@@ -313,7 +321,7 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      const platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+      const platformSelect = findPlatformSelect(root);
       expect(platformSelect?.props.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ value: 'new-api', description: expect.stringContaining('聚合面板') }),
@@ -357,8 +365,7 @@ describe('Sites create redirect', () => {
       await flushMicrotasks();
 
       const urlInput = findPrimarySiteUrlInput(root);
-      const selects = root.root.findAllByType(ModernSelect);
-      const platformSelect = selects.at(-1);
+      const platformSelect = findPlatformSelect(root);
 
       await act(async () => {
         platformSelect?.props.onChange('preset:zhipu-coding-plan-openai');
@@ -410,7 +417,7 @@ describe('Sites create redirect', () => {
       await flushMicrotasks();
 
       const urlInput = findPrimarySiteUrlInput(root);
-      const platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+      const platformSelect = findPlatformSelect(root);
 
       await act(async () => {
         platformSelect?.props.onChange('preset:zhipu-coding-plan-openai');
@@ -469,13 +476,13 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      let platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+      let platformSelect = findPlatformSelect(root);
       await act(async () => {
         platformSelect?.props.onChange('openai');
       });
       await flushMicrotasks();
 
-      platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+      platformSelect = findPlatformSelect(root);
       expect(platformSelect?.props.value).toBe('openai');
       expect(JSON.stringify(root.toJSON())).not.toContain('已应用官方预设');
     } finally {
@@ -513,7 +520,7 @@ describe('Sites create redirect', () => {
       await flushMicrotasks();
 
       const nameInput = root.root.find((node) => node.type === 'input' && node.props.placeholder === '站点名称');
-      let platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+      let platformSelect = findPlatformSelect(root);
       const saveButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
@@ -572,8 +579,7 @@ describe('Sites create redirect', () => {
     // Fill form
     const nameInput = root.root.find((node) => node.type === 'input' && node.props.placeholder === '站点名称');
     const urlInput = findPrimarySiteUrlInput(root);
-    const selects = root.root.findAllByType(ModernSelect);
-    const platformSelect = selects.at(-1);
+    const platformSelect = findPlatformSelect(root);
     const saveButton = root.root.find((node) => (
       node.type === 'button'
       && typeof node.props.onClick === 'function'
@@ -638,7 +644,7 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      const platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+      const platformSelect = findPlatformSelect(root);
       const presetAlert = root.root.find((node) => (
         typeof node.props.className === 'string'
         && node.props.className.includes('alert alert-info')

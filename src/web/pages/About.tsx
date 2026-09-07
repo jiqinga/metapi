@@ -29,8 +29,8 @@ const TECH_STACK = [
 ];
 
 const LINKS = [
-  { label: 'GitHub', href: 'https://github.com/cita-777/metapi', icon: '📂' },
-  { label: 'Docker Hub', href: 'https://hub.docker.com/r/1467078763/metapi', icon: '🐳' },
+  { label: 'GitHub', href: 'https://github.com/jiqinga/metapi', icon: '📂' },
+  { label: 'Docker Hub', href: 'https://hub.docker.com/r/jiqinga/metapi', icon: '🐳' },
   { label: '站点文档', href: SITE_DOCS_URL, icon: '📚' },
 ];
 
@@ -117,7 +117,7 @@ export default function About() {
           <div>GitHub 稳定版：{latestGitHubVersion || '暂无数据'}</div>
           <div>Docker Hub：{latestDockerHubVersion || '暂无数据'}</div>
           <div>
-            <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}>
+            <Link to="/settings/maintenance" style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}>
               前往更新中心
             </Link>
           </div>

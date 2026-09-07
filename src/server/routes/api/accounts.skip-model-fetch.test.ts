@@ -18,6 +18,7 @@ describe('accounts skipModelFetch behavior', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'] | undefined;
   let dataDir = '';
 
   beforeAll(async () => {
@@ -29,6 +30,7 @@ describe('accounts skipModelFetch behavior', () => {
     const routesModule = await import('./accounts.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -50,6 +52,9 @@ describe('accounts skipModelFetch behavior', () => {
 
   afterAll(async () => {
     await app.close();
+    if (typeof closeDbConnections === 'function') {
+      await closeDbConnections();
+    }
     if (dataDir) {
       try {
         rmSync(dataDir, { recursive: true, force: true });

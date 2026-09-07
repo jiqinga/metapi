@@ -7,7 +7,7 @@ import { isTokenExpiredError } from '../../services/alertRules.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
+import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../proxy-core/downstreamPolicyRequest.js';
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
@@ -19,6 +19,11 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import {
+  buildEmbeddingCacheKey,
+  getCachedEmbedding,
+  storeEmbedding,
+} from '../../services/embeddingResponseCache.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
   buildForcedChannelUnavailableMessage,
@@ -48,6 +53,16 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
       body,
     });
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
+
+    // Only cacheable for deterministic requests: single string/array input, fixed model, no streaming.
+    const cacheKey = buildEmbeddingCacheKey(
+      String(requestedModel),
+      typeof body.input === 'string' ? body.input : JSON.stringify(body.input ?? null),
+    );
+    const cached = getCachedEmbedding(cacheKey);
+    if (cached) {
+      return reply.code(cached.status).send(cached.body);
+    }
 
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
@@ -86,7 +101,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
               },
               body: JSON.stringify(forwardBody),
               signal,
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
+            }, getProxyUrlFromExtraConfig(selected.account.extraConfig), selected.account.extraConfig)),
             {
               firstByteTimeoutMs,
               startedAtMs: attemptStartedAtMs,
@@ -152,6 +167,9 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
           tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
         ));
         recordDownstreamCostUsage(request, estimatedCost);
+        if (upstream.status >= 200 && upstream.status < 300) {
+          storeEmbedding(cacheKey, { status: upstream.status, body: data });
+        }
         logProxy(
           selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId,
           resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails, clientContext, downstreamPath,

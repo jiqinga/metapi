@@ -78,12 +78,17 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     systemProxyUrl: env.SYSTEM_PROXY_URL || '',
     accountCredentialSecret: env.ACCOUNT_CREDENTIAL_SECRET || env.AUTH_TOKEN || 'change-me-admin-token',
     checkinCron: env.CHECKIN_CRON || '0 8 * * *',
+    checkinEnabled: parseBoolean(env.CHECKIN_ENABLED, true),
     checkinScheduleMode: (env.CHECKIN_SCHEDULE_MODE || 'cron').trim().toLowerCase() === 'interval'
       ? 'interval' as const
       : 'cron' as const,
     checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(parseNumber(env.CHECKIN_INTERVAL_HOURS, 6)))),
     balanceRefreshCron: env.BALANCE_REFRESH_CRON || '0 * * * *',
+    balanceRefreshEnabled: parseBoolean(env.BALANCE_REFRESH_ENABLED, true),
+    balanceRefreshModelsEnabled: parseBoolean(env.BALANCE_REFRESH_MODELS_ENABLED, true),
+    dailySummaryEnabled: parseBoolean(env.DAILY_SUMMARY_ENABLED, true),
     logCleanupCron: env.LOG_CLEANUP_CRON || '0 6 * * *',
+    logCleanupEnabled: parseBoolean(env.LOG_CLEANUP_ENABLED, true),
     logCleanupConfigured: false,
     logCleanupUsageLogsEnabled: parseBoolean(env.LOG_CLEANUP_USAGE_LOGS_ENABLED, false),
     logCleanupProgramLogsEnabled: parseBoolean(env.LOG_CLEANUP_PROGRAM_LOGS_ENABLED, false),
@@ -120,6 +125,21 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     requestBodyLimit: DEFAULT_REQUEST_BODY_LIMIT,
     routingFallbackUnitCost: Math.max(1e-6, parseNumber(env.ROUTING_FALLBACK_UNIT_COST, 1)),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
+    embeddingCacheEnabled: parseBoolean(env.EMBEDDING_CACHE_ENABLED, true),
+    embeddingCacheTtlSec: Math.max(1, Math.trunc(parseNumber(env.EMBEDDING_CACHE_TTL_SEC, 21_600))),
+    embeddingCacheMaxEntries: Math.max(1, Math.trunc(parseNumber(env.EMBEDDING_CACHE_MAX_ENTRIES, 1_000))),
+    outboundHttp: {
+      // Global undici dispatcher tuning + per-request deadline defaults. See
+      // httpClient.ts. Header timeout stays generous to protect streaming
+      // chat forwarding; body timeout is disabled (0) so SSE is never cut.
+      keepAliveTimeoutMs: Math.max(1_000, Math.trunc(parseNumber(env.OUTBOUND_HTTP_KEEPALIVE_TIMEOUT_MS, 4_000))),
+      keepAliveMaxTimeoutMs: Math.max(1_000, Math.trunc(parseNumber(env.OUTBOUND_HTTP_KEEPALIVE_MAX_TIMEOUT_MS, 30_000))),
+      connectTimeoutMs: Math.max(1_000, Math.trunc(parseNumber(env.OUTBOUND_HTTP_CONNECT_TIMEOUT_MS, 10_000))),
+      headersTimeoutMs: Math.max(0, Math.trunc(parseNumber(env.OUTBOUND_HTTP_HEADERS_TIMEOUT_MS, 300_000))),
+      bodyTimeoutMs: Math.max(0, Math.trunc(parseNumber(env.OUTBOUND_HTTP_BODY_TIMEOUT_MS, 0))),
+      retryMaxRetries: Math.max(0, Math.min(5, Math.trunc(parseNumber(env.OUTBOUND_HTTP_RETRY_MAX_RETRIES, 2)))),
+      requestDeadlineMs: Math.max(1_000, Math.trunc(parseNumber(env.OUTBOUND_HTTP_REQUEST_DEADLINE_MS, 30_000))),
+    },
     tokenRouterFailureCooldownMaxSec: normalizeTokenRouterFailureCooldownMaxSec(
       parseNumber(env.TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC, TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING),
     ) ?? TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING,
@@ -148,7 +168,11 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     modelAvailabilityProbeIntervalMs: Math.max(60_000, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_PROBE_INTERVAL_MS, 30 * 60 * 1000))),
     modelAvailabilityProbeTimeoutMs: Math.max(3_000, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_PROBE_TIMEOUT_MS, 15_000))),
     modelAvailabilityProbeConcurrency: Math.max(1, Math.min(16, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_PROBE_CONCURRENCY, 1)))),
+    accountVerifyTimeoutMs: Math.max(3_000, Math.trunc(parseNumber(env.ACCOUNT_VERIFY_TIMEOUT_MS, 10_000))),
+    proxyTestTimeoutMs: Math.max(3_000, Math.trunc(parseNumber(env.PROXY_TEST_TIMEOUT_MS, 30_000))),
     proxyLogRetentionDays: Math.max(0, Math.trunc(parseNumber(env.PROXY_LOG_RETENTION_DAYS, 30))),
+    modelProtocolBadgeWindowDays: Math.max(1, Math.trunc(parseNumber(env.MODEL_PROTOCOL_BADGE_WINDOW_DAYS, 3))),
+    accountAvailabilityWindowHours: Math.max(1, Math.trunc(parseNumber(env.ACCOUNT_AVAILABILITY_WINDOW_HOURS, 24))),
     proxyLogRetentionPruneIntervalMinutes: Math.max(1, Math.trunc(parseNumber(env.PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES, 30))),
     proxyFileRetentionDays: Math.max(0, Math.trunc(parseNumber(env.PROXY_FILE_RETENTION_DAYS, 30))),
     proxyFileRetentionPruneIntervalMinutes: Math.max(1, Math.trunc(parseNumber(env.PROXY_FILE_RETENTION_PRUNE_INTERVAL_MINUTES, 60))),
@@ -162,6 +186,8 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       betaFeatures: parseOptionalSecret(env.CODEX_HEADER_DEFAULTS_BETA_FEATURES),
     },
     payloadRules: normalizePayloadRulesConfig(parseJsonValue(env.PAYLOAD_RULES_JSON || env.PAYLOAD_RULES)),
+    claudeCodeCloakEnabled: parseBoolean(env.CLAUDE_CODE_CLOAK_ENABLED, false),
+    codexCloakEnabled: parseBoolean(env.CODEX_CLOAK_ENABLED, false),
     routingWeights: {
       baseWeightFactor: parseNumber(env.BASE_WEIGHT_FACTOR, 0.5),
       valueScoreFactor: parseNumber(env.VALUE_SCORE_FACTOR, 0.5),

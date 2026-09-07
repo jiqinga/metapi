@@ -43,14 +43,29 @@ const siteDisabledModelsPayloadSchema = z.object({
   models: z.array(z.string()).optional(),
 }).passthrough();
 
+const protocolOverrideEntrySchema = z.object({
+  modelName: requiredTrimmedString,
+  protocols: z.array(z.enum(['chat', 'messages', 'responses'])).min(1),
+}).passthrough();
+
+const siteModelProtocolOverridesPayloadSchema = z.object({
+  overrides: z.array(protocolOverrideEntrySchema).optional(),
+}).passthrough();
+
 const siteDetectPayloadSchema = z.object({
   url: requiredTrimmedString,
+}).passthrough();
+
+const siteImportPayloadSchema = z.object({
+  data: z.record(z.string(), z.unknown()),
 }).passthrough();
 
 export type SiteBatchPayload = z.output<typeof siteBatchPayloadSchema>;
 export type SiteCreatePayload = z.output<typeof siteCreatePayloadSchema>;
 export type SiteDetectPayload = z.output<typeof siteDetectPayloadSchema>;
 export type SiteDisabledModelsPayload = z.output<typeof siteDisabledModelsPayloadSchema>;
+export type SiteImportPayload = z.output<typeof siteImportPayloadSchema>;
+export type SiteModelProtocolOverridesPayload = z.output<typeof siteModelProtocolOverridesPayloadSchema>;
 export type SiteUpdatePayload = z.output<typeof siteUpdatePayloadSchema>;
 
 function normalizeSitePayloadInput(input: unknown): unknown {
@@ -79,6 +94,9 @@ function formatSitePayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'models') {
     return 'Invalid models. Expected string[].';
+  }
+  if (firstPath === 'data') {
+    return '导入数据格式错误：需要 JSON 对象';
   }
   return 'Invalid site payload.';
 }
@@ -143,9 +161,39 @@ export function parseSiteDisabledModelsPayload(input: unknown):
   };
 }
 
+export function parseSiteModelProtocolOverridesPayload(input: unknown):
+{ success: true; data: SiteModelProtocolOverridesPayload } | { success: false; error: string } {
+  const result = siteModelProtocolOverridesPayloadSchema.safeParse(normalizeSitePayloadInput(input));
+  if (!result.success) {
+    return {
+      success: false,
+      error: formatSitePayloadError(result.error),
+    };
+  }
+  return {
+    success: true,
+    data: result.data,
+  };
+}
+
 export function parseSiteDetectPayload(input: unknown):
 { success: true; data: SiteDetectPayload } | { success: false; error: string } {
   const result = siteDetectPayloadSchema.safeParse(normalizeSitePayloadInput(input));
+  if (!result.success) {
+    return {
+      success: false,
+      error: formatSitePayloadError(result.error),
+    };
+  }
+  return {
+    success: true,
+    data: result.data,
+  };
+}
+
+export function parseSiteImportPayload(input: unknown):
+{ success: true; data: SiteImportPayload } | { success: false; error: string } {
+  const result = siteImportPayloadSchema.safeParse(normalizeSitePayloadInput(input));
   if (!result.success) {
     return {
       success: false,

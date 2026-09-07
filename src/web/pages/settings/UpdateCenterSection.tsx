@@ -89,7 +89,7 @@ const DEFAULT_CONFIG: NonNullable<UpdateCenterStatus['config']> = {
   namespace: 'default',
   releaseName: '',
   chartRef: '',
-  imageRepository: '1467078763/metapi',
+  imageRepository: 'jiqinga/metapi',
   githubReleasesEnabled: true,
   dockerHubTagsEnabled: true,
   defaultDeploySource: 'github-release',
@@ -652,7 +652,7 @@ export default function UpdateCenterSection() {
               value={config.chartRef}
               onChange={(e) => setConfig((prev) => ({ ...prev, chartRef: e.target.value }))}
               style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-              placeholder="oci://ghcr.io/cita-777/charts/metapi"
+              placeholder="oci://ghcr.io/jiqinga/charts/metapi"
             />
           </label>
           <label>
@@ -661,7 +661,7 @@ export default function UpdateCenterSection() {
               value={config.imageRepository}
               onChange={(e) => setConfig((prev) => ({ ...prev, imageRepository: e.target.value }))}
               style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-              placeholder="1467078763/metapi"
+              placeholder="jiqinga/metapi"
             />
           </label>
         </div>

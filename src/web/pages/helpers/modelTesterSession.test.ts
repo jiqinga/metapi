@@ -14,10 +14,13 @@ import {
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
   attachForcedChannelToEnvelope,
+  collectModelTesterModelEntries,
   collectModelTesterModelNames,
+  collectModelTesterSiteNames,
   countConversationTurns,
   createConversationUserMessage,
   extractConversationUploadedFilesFromMessage,
+  filterModelTesterModelEntries,
   filterModelTesterModelNames,
   parseCustomRequestBody,
   parseModelTesterSession,
@@ -100,6 +103,7 @@ describe('modelTesterSession', () => {
         searchQuery: 'hello',
         searchAllowedDomains: 'openai.com, google.com',
       },
+      selectedSite: 'openai-a',
     };
 
     const serialized = serializeModelTesterSession(state);
@@ -933,5 +937,90 @@ describe('modelTesterSession', () => {
       'bge-m3',
       'BAAI/bge-large-en-v1.5',
     ]);
+  });
+
+  it('collects model entries with per-model site names from marketplace accounts', () => {
+    const entries = collectModelTesterModelEntries(
+      {
+        models: [
+          { name: 'gpt-4o-mini', accounts: [{ site: 'openai-a' }, { site: 'openai-a' }, { site: 'openai-b' }] },
+          { name: 'claude-3.5-sonnet', accounts: [{ site: 'anthropic-a' }] },
+        ],
+      },
+      [{ modelPattern: 'BAAI/bge-large-en-v1.5', enabled: true }],
+    );
+
+    expect(entries).toEqual([
+      { name: 'gpt-4o-mini', sites: ['openai-a', 'openai-b'] },
+      { name: 'claude-3.5-sonnet', sites: ['anthropic-a'] },
+      { name: 'BAAI/bge-large-en-v1.5', sites: [] },
+    ]);
+  });
+
+  it('collectModelTesterModelNames stays in sync with the entry collector', () => {
+    const marketplace = {
+      models: [
+        { name: 'gpt-4o-mini', accounts: [{ site: 'openai-a' }] },
+        { name: 'bge-large-en-v1.5' },
+      ],
+    };
+    const names = collectModelTesterModelNames(
+      marketplace as Parameters<typeof collectModelTesterModelNames>[0],
+      [{ modelPattern: 'BAAI/bge-large-en-v1.5', enabled: true }],
+    );
+
+    expect(names).toEqual(['gpt-4o-mini', 'bge-large-en-v1.5', 'BAAI/bge-large-en-v1.5']);
+  });
+
+  it('collects a sorted unique site list across entries', () => {
+    const sites = collectModelTesterSiteNames([
+      { name: 'a', sites: ['zeta', 'alpha'] },
+      { name: 'b', sites: [] },
+      { name: 'c', sites: ['alpha'] },
+    ]);
+
+    expect(sites).toEqual(['alpha', 'zeta']);
+  });
+
+  it('filters entries by site only, excluding site-agnostic models', () => {
+    const entries: ReturnType<typeof collectModelTesterModelEntries> = [
+      { name: 'gpt-4o', sites: ['site-a'] },
+      { name: 'claude-3', sites: ['site-b'] },
+      { name: 'route-model', sites: [] },
+    ];
+    const filtered = filterModelTesterModelEntries(entries, { site: 'site-a' });
+
+    expect(filtered.map((e) => e.name)).toEqual(['gpt-4o']);
+  });
+
+  it('includes site-agnostic models when no site is selected', () => {
+    const entries: ReturnType<typeof collectModelTesterModelEntries> = [
+      { name: 'gpt-4o', sites: ['site-a'] },
+      { name: 'route-model', sites: [] },
+    ];
+    const filtered = filterModelTesterModelEntries(entries, {});
+
+    expect(filtered.map((e) => e.name)).toEqual(['gpt-4o', 'route-model']);
+  });
+
+  it('filters entries by site and keyword combined', () => {
+    const entries: ReturnType<typeof collectModelTesterModelEntries> = [
+      { name: 'gpt-4o', sites: ['site-a'] },
+      { name: 'gpt-3.5', sites: ['site-b'] },
+      { name: 'claude-3', sites: ['site-a'] },
+    ];
+    const filtered = filterModelTesterModelEntries(entries, { site: 'site-a', query: 'gpt' });
+
+    expect(filtered.map((e) => e.name)).toEqual(['gpt-4o']);
+  });
+
+  it('returns all entries when no site and no keyword are given', () => {
+    const entries: ReturnType<typeof collectModelTesterModelEntries> = [
+      { name: 'gpt-4o', sites: ['site-a'] },
+      { name: 'claude-3', sites: ['site-b'] },
+    ];
+    const filtered = filterModelTesterModelEntries(entries, {});
+
+    expect(filtered).toEqual(entries);
   });
 });

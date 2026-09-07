@@ -45,6 +45,7 @@ type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
 type SiteDisabledModelRow = typeof schema.siteDisabledModels.$inferSelect;
+type AccountDisabledModelRow = typeof schema.accountDisabledModels.$inferSelect;
 type ModelAvailabilityRow = typeof schema.modelAvailability.$inferSelect;
 type TokenModelAvailabilityRow = typeof schema.tokenModelAvailability.$inferSelect;
 type ProxyLogRow = typeof schema.proxyLogs.$inferSelect;
@@ -81,6 +82,7 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
 >>;
 
 type BackupSiteDisabledModelRow = Pick<SiteDisabledModelRow, 'siteId' | 'modelName'>;
+type BackupAccountDisabledModelRow = Pick<AccountDisabledModelRow, 'accountId' | 'modelName'>;
 type BackupManualModelRow = {
   accountId: number;
   modelName: string;
@@ -111,6 +113,7 @@ interface AccountsBackupSection {
   routeChannels: BackupRouteChannelRow[];
   routeGroupSources: RouteGroupSourceRow[];
   siteDisabledModels?: BackupSiteDisabledModelRow[];
+  accountDisabledModels?: BackupAccountDisabledModelRow[];
   manualModels?: BackupManualModelRow[];
   downstreamApiKeys?: BackupDownstreamApiKeyRow[];
 }
@@ -1305,6 +1308,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     routeChannels,
     routeGroupSources,
     siteDisabledModels,
+    accountDisabledModels,
     manualModels,
     downstreamApiKeys,
   ] = await Promise.all([
@@ -1324,6 +1328,9 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.siteDisabledModels)
       .orderBy(asc(schema.siteDisabledModels.siteId), asc(schema.siteDisabledModels.modelName))
       .all() as Promise<SiteDisabledModelRow[]>,
+    db.select().from(schema.accountDisabledModels)
+      .orderBy(asc(schema.accountDisabledModels.accountId), asc(schema.accountDisabledModels.modelName))
+      .all() as Promise<AccountDisabledModelRow[]>,
     db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.isManual, true))
       .orderBy(asc(schema.modelAvailability.accountId), asc(schema.modelAvailability.modelName))
@@ -1353,6 +1360,10 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     routeGroupSources,
     siteDisabledModels: siteDisabledModels.map((row) => ({
       siteId: row.siteId,
+      modelName: row.modelName,
+    })),
+    accountDisabledModels: accountDisabledModels.map((row) => ({
+      accountId: row.accountId,
       modelName: row.modelName,
     })),
     manualModels: manualModels.map((row) => ({
@@ -1427,6 +1438,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const siteDisabledModels = Array.isArray(input.siteDisabledModels)
     ? input.siteDisabledModels as BackupSiteDisabledModelRow[]
     : undefined;
+  const accountDisabledModels = Array.isArray(input.accountDisabledModels)
+    ? input.accountDisabledModels as BackupAccountDisabledModelRow[]
+    : undefined;
   const manualModels = Array.isArray(input.manualModels)
     ? input.manualModels as BackupManualModelRow[]
     : undefined;
@@ -1445,6 +1459,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     routeChannels,
     routeGroupSources,
     siteDisabledModels,
+    accountDisabledModels,
     manualModels,
     downstreamApiKeys,
   };
@@ -1526,6 +1541,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   const runtimeState = await collectCurrentRuntimeStateSnapshot();
   const importedIndexes = buildRuntimeIdentityIndexesFromSection(section);
   const shouldReplaceSiteDisabledModels = Array.isArray(section.siteDisabledModels);
+  const shouldReplaceAccountDisabledModels = Array.isArray(section.accountDisabledModels);
   const shouldReplaceManualModels = Array.isArray(section.manualModels);
   const shouldReplaceDownstreamApiKeys = Array.isArray(section.downstreamApiKeys);
 
@@ -1539,6 +1555,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
+    await tx.delete(schema.accountDisabledModels).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.sites).run();
@@ -1685,6 +1702,15 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       for (const row of section.siteDisabledModels || []) {
         await tx.insert(schema.siteDisabledModels).values({
           siteId: row.siteId,
+          modelName: row.modelName,
+        }).run();
+      }
+    }
+
+    if (shouldReplaceAccountDisabledModels) {
+      for (const row of section.accountDisabledModels || []) {
+        await tx.insert(schema.accountDisabledModels).values({
+          accountId: row.accountId,
           modelName: row.modelName,
         }).run();
       }

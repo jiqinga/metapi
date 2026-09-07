@@ -80,7 +80,7 @@ describe('navigationFocus helpers', () => {
       relatedType: 'update_center',
       relatedId: null,
       type: 'status',
-    })).toBe('/settings');
+    })).toBe('/settings/maintenance');
 
     expect(buildEventNavigationPath({ type: 'proxy' })).toBe('/logs');
     expect(buildEventNavigationPath({ type: 'checkin' })).toBe('/checkin');

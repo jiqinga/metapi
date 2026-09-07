@@ -24,6 +24,7 @@ import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { withAccountProxyOverride } from './siteProxy.js';
+import { withRequestDeadline } from '../httpClient.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
@@ -177,7 +178,7 @@ function looksLikeShieldChallenge(message: string): boolean {
 
 function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
   const lowered = message.toLowerCase();
-  if (lowered.includes('timeout') || lowered.includes('timed out') || lowered.includes('请求超时')) return 'timeout';
+  if (lowered.includes('timeout') || lowered.includes('timed out') || lowered.includes('请求超时') || lowered.includes('aborted')) return 'timeout';
   if (lowered.includes('http 401') || lowered.includes('http 403')
     || lowered.includes('unauthorized') || lowered.includes('invalid')
     || lowered.includes('无权') || lowered.includes('未提供令牌')) return 'unauthorized';
@@ -256,17 +257,24 @@ function isExactModelPattern(modelPattern: string): boolean {
 }
 
 async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      fn(),
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  // Run within an ambient abort deadline so the underlying fetch is actually
+  // cancelled on timeout (see httpClient.outboundFetch) instead of leaking the
+  // socket. The deadline gets a small grace beyond the race timer so the race
+  // rejects first with the descriptive `timeoutMessage` (preserving error
+  // classification) while the abort still tears the socket down shortly after.
+  return withRequestDeadline(timeoutMs + 2_000, async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  });
 }
 
 function buildAccountNotFoundRefreshResult(accountId: number): ModelRefreshAccountNotFoundResult {
@@ -722,7 +730,26 @@ export async function refreshModelsForAccount(
       });
       discoveryAccount = refreshedAccount;
       if (codexModels.length === 0) {
-        throw new Error('未获取到可用模型');
+        await updateOauthModelDiscoveryState({
+          account: discoveryAccount,
+          checkedAt,
+          status: 'healthy',
+          lastDiscoveredModels: [],
+        });
+        await setAccountRuntimeHealth(accountId, {
+          state: 'degraded',
+          reason: 'Codex 模型探测成功，但上游未返回可用模型',
+          source: 'model-discovery',
+          checkedAt,
+        });
+        return buildSuccessfulRefreshResult({
+          accountId,
+          modelCount: 0,
+          modelsPreview: [],
+          tokenScanned: 0,
+          discoveredByCredential: true,
+          discoveredApiToken: false,
+        });
       }
 
       const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
@@ -809,7 +836,26 @@ export async function refreshModelsForAccount(
       });
       discoveryAccount = refreshedAccount;
       if (claudeModels.length === 0) {
-        throw new Error('未获取到可用模型');
+        await updateOauthModelDiscoveryState({
+          account: discoveryAccount,
+          checkedAt,
+          status: 'healthy',
+          lastDiscoveredModels: [],
+        });
+        await setAccountRuntimeHealth(accountId, {
+          state: 'degraded',
+          reason: 'Claude OAuth 模型探测成功，但上游未返回可用模型',
+          source: 'model-discovery',
+          checkedAt,
+        });
+        return buildSuccessfulRefreshResult({
+          accountId,
+          modelCount: 0,
+          modelsPreview: [],
+          tokenScanned: 0,
+          discoveredByCredential: true,
+          discoveredApiToken: false,
+        });
       }
       const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newClaudeModels.length > 0) {
@@ -994,7 +1040,26 @@ export async function refreshModelsForAccount(
       });
       discoveryAccount = refreshedAccount;
       if (antigravityModels.length === 0) {
-        throw new Error('未获取到可用模型');
+        await updateOauthModelDiscoveryState({
+          account: discoveryAccount,
+          checkedAt,
+          status: 'healthy',
+          lastDiscoveredModels: [],
+        });
+        await setAccountRuntimeHealth(accountId, {
+          state: 'degraded',
+          reason: 'Antigravity 模型探测成功，但上游未返回可用模型',
+          source: 'model-discovery',
+          checkedAt,
+        });
+        return buildSuccessfulRefreshResult({
+          accountId,
+          modelCount: 0,
+          modelsPreview: [],
+          tokenScanned: 0,
+          discoveredByCredential: true,
+          discoveredApiToken: false,
+        });
       }
 
       const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
@@ -1262,7 +1327,25 @@ export async function refreshModelsForAccount(
 
   if (accountModels.size === 0) {
     const firstMessage = failureMessages[0] || '';
-    const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
+    if (!firstMessage) {
+      // Every credential probe succeeded but upstream returned no models — the
+      // request is healthy, only the model set is empty.
+      await setAccountRuntimeHealth(account.id, {
+        state: 'degraded',
+        reason: '模型探测成功，但上游未返回可用模型',
+        source: 'model-discovery',
+        checkedAt: new Date().toISOString(),
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: 0,
+        modelsPreview: [],
+        tokenScanned: scannedTokenCount,
+        discoveredByCredential,
+        discoveredApiToken: !!discoveredApiToken,
+      });
+    }
+    const errorCode = classifyModelDiscoveryError(firstMessage);
     const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);
     await setAccountRuntimeHealth(account.id, {
       state: 'unhealthy',
@@ -1328,7 +1411,7 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
   const results: ModelRefreshResult[] = [];
   for (let offset = 0; offset < accounts.length; offset += MODEL_REFRESH_BATCH_SIZE) {
     const batch = accounts.slice(offset, offset + MODEL_REFRESH_BATCH_SIZE);
-    const batchResults = await Promise.all(batch.map(async (account) => refreshModelsForAccount(account.id)));
+    const batchResults = await Promise.all(batch.map(async (account) => refreshModelsForAccount(account.id, { allowInactive: true })));
     results.push(...batchResults);
   }
   return results;
@@ -1376,6 +1459,19 @@ export async function rebuildTokenRoutesFromAvailability() {
 
   function isModelDisabledForSite(siteId: number, modelName: string): boolean {
     const disabled = disabledModelsBySite.get(siteId);
+    return !!disabled && disabled.has(modelName.toLowerCase());
+  }
+
+  // Load connection-level disabled models (per account)
+  const accountDisabledModelRows = await db.select().from(schema.accountDisabledModels).all();
+  const disabledModelsByAccount = new Map<number, Set<string>>();
+  for (const row of accountDisabledModelRows) {
+    if (!disabledModelsByAccount.has(row.accountId)) disabledModelsByAccount.set(row.accountId, new Set());
+    disabledModelsByAccount.get(row.accountId)!.add(row.modelName.toLowerCase());
+  }
+
+  function isModelDisabledForAccount(accountId: number, modelName: string): boolean {
+    const disabled = disabledModelsByAccount.get(accountId);
     return !!disabled && disabled.has(modelName.toLowerCase());
   }
 
@@ -1447,11 +1543,17 @@ export async function rebuildTokenRoutesFromAvailability() {
   };
 
   for (const row of usableTokenRows) {
+    // Skip candidates whose owning connection disabled the model
+    if (isModelDisabledForAccount(row.accounts.id, row.token_model_availability.modelName)) continue;
     addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
   }
 
   for (const row of accountRows) {
     if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
+    // Skip candidates whose owning connection disabled the model; for oauth
+    // route units each member row is filtered by its own account so a unit
+    // only loses the members that disabled the model.
+    if (isModelDisabledForAccount(row.accounts.id, row.model_availability.modelName)) continue;
     const routeUnit = routeUnitByAccountId.get(row.accounts.id);
     if (routeUnit) {
       addModelCandidate(

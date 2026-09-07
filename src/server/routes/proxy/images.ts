@@ -6,12 +6,12 @@ import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertSe
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
+import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../proxy-core/downstreamPolicyRequest.js';
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
-import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from './multipart.js';
+import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from '../../proxy-core/multipartRequest.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
@@ -87,7 +87,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
               },
               body: JSON.stringify(forwardBody),
               signal,
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
+            }, getProxyUrlFromExtraConfig(selected.account.extraConfig), selected.account.extraConfig)),
             {
               firstByteTimeoutMs,
               startedAtMs: attemptStartedAtMs,
@@ -291,7 +291,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
               body: cloneFormDataWithOverrides(multipartForm, {
                 model: upstreamModel,
               }) as any,
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig))
+            }, getProxyUrlFromExtraConfig(selected.account.extraConfig), selected.account.extraConfig)
             : withSiteRecordProxyRequestInit(selected.site, {
               method: 'POST',
               headers: {
@@ -302,7 +302,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
                 ...(jsonBody || {}),
                 model: upstreamModel,
               }),
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig));
+            }, getProxyUrlFromExtraConfig(selected.account.extraConfig), selected.account.extraConfig);
           const response = await fetchWithObservedFirstByte(
             async (signal) => fetch(targetUrl, {
               ...requestInit,

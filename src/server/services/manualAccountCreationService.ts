@@ -11,8 +11,9 @@ import {
 import { runWithSiteApiEndpointPool } from './siteApiEndpointService.js';
 import { type AccountCreatePayload } from '../contracts/accountsRoutePayloads.js';
 import { convergeAccountMutation } from './accountMutationWorkflow.js';
+import { config } from '../config.js';
 
-const ACCOUNT_VERIFY_TIMEOUT_MS = 10_000;
+const ACCOUNT_VERIFY_TIMEOUT_MS = config.accountVerifyTimeoutMs;
 
 type AccountInitializationParams = {
   accountId: number;

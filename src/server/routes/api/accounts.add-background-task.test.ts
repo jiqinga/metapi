@@ -40,6 +40,7 @@ describe('accounts background initialization', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'] | undefined;
   let dataDir = '';
   let resetBackgroundTasks: (() => void) | null = null;
   let getBackgroundTask: ((taskId: string) => { status: string } | null) | null = null;
@@ -54,6 +55,7 @@ describe('accounts background initialization', () => {
     const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
     getBackgroundTask = backgroundTaskModule.getBackgroundTask;
 
@@ -85,6 +87,9 @@ describe('accounts background initialization', () => {
 
   afterAll(async () => {
     await app.close();
+    if (typeof closeDbConnections === 'function') {
+      await closeDbConnections();
+    }
     if (dataDir) {
       try {
         rmSync(dataDir, { recursive: true, force: true });

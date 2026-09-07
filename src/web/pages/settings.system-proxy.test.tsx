@@ -93,7 +93,7 @@ describe('Settings system proxy', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -133,7 +133,7 @@ describe('Settings system proxy', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>

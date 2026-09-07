@@ -181,6 +181,20 @@ export function buildSurfaceChannelBusyMessage(waitMs: number): string {
     : 'Channel busy: no session slot available';
 }
 
+/**
+ * Derives the upstream endpoint label ('chat' | 'messages' | 'responses')
+ * from the upstream request path, so it can be persisted as a structured
+ * column on proxy_logs instead of parsing it back out of error_message text.
+ */
+export function deriveUpstreamEndpointFromPath(upstreamPath: string | null | undefined): string | null {
+  if (!upstreamPath) return null;
+  const path = upstreamPath.toLowerCase();
+  if (path.includes('/v1/messages') || path.includes('messages')) return 'messages';
+  if (path.includes('/v1/responses') || path.includes('/responses')) return 'responses';
+  if (path.includes('/v1/chat/completions') || path.includes('chat/completions') || path.includes('/chat/')) return 'chat';
+  return null;
+}
+
 export async function writeSurfaceProxyLog(input: {
   warningScope: string;
   selected: {
@@ -242,6 +256,7 @@ export async function writeSurfaceProxyLog(input: {
       clientAppName: input.clientContext?.clientAppName || null,
       clientConfidence: input.clientContext?.clientConfidence || null,
       errorMessage: normalizedErrorMessage,
+      upstreamEndpoint: deriveUpstreamEndpointFromPath(input.upstreamPath),
       retryCount: input.retryCount,
       createdAt,
     });
@@ -270,7 +285,7 @@ export function createSurfaceDispatchRequest(input: {
         method: 'POST',
         headers: requestForFetch.headers,
         body: JSON.stringify(requestForFetch.body),
-      }, channelProxyUrl),
+      }, channelProxyUrl, input.accountExtraConfig),
     })
   );
 }

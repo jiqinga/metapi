@@ -21,7 +21,7 @@ import {
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
 } from '../../services/upstreamEndpointRuntimeMemory.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
+import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../downstreamPolicyRequest.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { detectProxyFailure } from '../../services/proxyFailureJudge.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
@@ -563,6 +563,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             responsesOriginalBody,
             downstreamHeaders: request.headers as Record<string, unknown>,
             providerHeaders: buildProviderHeaders(),
+            accountExtraConfig: selected.account.extraConfig,
             codexExplicitSessionId: codexSessionId || null,
           });
           const upstreamPath = (

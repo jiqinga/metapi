@@ -9,10 +9,12 @@ import { installAccountsSnapshotCompat } from './testApiCompat.js';
 const { apiMock, toastMock } = vi.hoisted(() => ({
   apiMock: {
     getAccounts: vi.fn(),
+    getAccountsQuery: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getSites: vi.fn(),
     updateAccount: vi.fn(),
     updateSiteDisabledModels: vi.fn(),
+    updateAccountDisabledModels: vi.fn(),
     rebuildRoutes: vi.fn(),
     refreshAccountHealth: vi.fn(),
     checkModels: vi.fn(),
@@ -78,6 +80,7 @@ describe('Accounts edit panel', () => {
     ]);
     apiMock.updateAccount.mockResolvedValue({ success: true });
     apiMock.updateSiteDisabledModels.mockResolvedValue({ success: true });
+    apiMock.updateAccountDisabledModels.mockResolvedValue({ success: true });
     apiMock.rebuildRoutes.mockResolvedValue({ success: true });
     apiMock.refreshAccountHealth.mockResolvedValue({ success: true });
     apiMock.getAccountModels.mockResolvedValue({
@@ -262,15 +265,16 @@ describe('Accounts edit panel', () => {
     }
   });
 
-  it('reports route rebuild failure without claiming success', async () => {
+  it('saves model disables to the connection-level endpoint without site-wide rebuild', async () => {
     apiMock.getAccountModels.mockResolvedValue({
       siteId: 1,
       siteName: 'Site A',
       models: [{ name: 'gpt-4', latencyMs: 120, disabled: false }],
       totalCount: 1,
       disabledCount: 0,
+      siteDisabledModels: [],
+      accountDisabledModels: [],
     });
-    apiMock.rebuildRoutes.mockRejectedValue(new Error('rebuild failed'));
 
     let root!: WebTestRenderer;
     try {
@@ -309,10 +313,11 @@ describe('Accounts edit panel', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.updateSiteDisabledModels).toHaveBeenCalledWith(1, []);
-      expect(apiMock.rebuildRoutes).toHaveBeenCalledWith(false, false);
-      expect(toastMock.error).toHaveBeenCalledWith('模型禁用设置已保存，但路由重建失败，请手动刷新路由');
-      expect(toastMock.success).not.toHaveBeenCalledWith('模型禁用设置已保存，路由已重建');
+      expect(apiMock.updateAccountDisabledModels).toHaveBeenCalledWith(1, []);
+      expect(apiMock.updateSiteDisabledModels).not.toHaveBeenCalled();
+      expect(apiMock.rebuildRoutes).not.toHaveBeenCalled();
+      expect(toastMock.success).toHaveBeenCalledWith('模型禁用设置已保存，仅对当前连接生效');
+      expect(toastMock.error).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
     }

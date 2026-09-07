@@ -3,6 +3,8 @@ import {
   type ConversationFileInputSummary,
 } from '../proxy-core/capabilities/conversationFileCapabilities.js';
 import type { UpstreamEndpoint } from '../proxy-core/orchestration/upstreamRequest.js';
+import { db, schema } from '../db/index.js';
+import { eq, and } from 'drizzle-orm';
 import { fetchModelPricingCatalog } from './modelPricingService.js';
 import {
   applyUpstreamEndpointRuntimePreference,
@@ -247,6 +249,43 @@ export async function resolveUpstreamEndpointCandidates(
     && sitePlatform !== 'antigravity'
     && sitePlatform !== 'gemini-cli'
   );
+
+  // Manual per-site-per-model protocol override short-circuits automatic catalog
+  // selection: when an override row exists for this (site, model), only the
+  // manually-selected protocols are used and the pricing catalog is not consulted.
+  try {
+    const overrideRow = await db.select({ protocols: schema.siteModelProtocolOverrides.protocols })
+      .from(schema.siteModelProtocolOverrides)
+      .where(and(
+        eq(schema.siteModelProtocolOverrides.siteId, context.site.id),
+        eq(schema.siteModelProtocolOverrides.modelName, modelName),
+      ))
+      .get();
+    if (overrideRow) {
+      let rawProtocols: unknown;
+      try { rawProtocols = JSON.parse(overrideRow.protocols); } catch { rawProtocols = []; }
+      const overrideSupported = new Set<UpstreamEndpoint>();
+      if (Array.isArray(rawProtocols)) {
+        for (const proto of rawProtocols) {
+          const normalized = normalizeEndpointTypes(String(proto));
+          for (const endpoint of normalized) overrideSupported.add(endpoint);
+        }
+      }
+      if (overrideSupported.size > 0) {
+        const firstOverride = prioritizedPreferredEndpoints.find((endpoint) => overrideSupported.has(endpoint));
+        if (firstOverride) {
+          return finalizeCandidates([
+            firstOverride,
+            ...prioritizedPreferredEndpoints.filter((endpoint) => endpoint !== firstOverride),
+          ]);
+        }
+      }
+      // Override existed but resolved to no valid endpoint — fall through to catalog
+      // so the request still has a chance rather than failing outright.
+    }
+  } catch {
+    // Override lookup failure must not block request handling.
+  }
 
   try {
     const catalog = await fetchModelPricingCatalog({

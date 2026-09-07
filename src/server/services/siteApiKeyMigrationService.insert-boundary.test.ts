@@ -19,6 +19,7 @@ type MigrationModule = typeof import('./siteApiKeyMigrationService.js');
 
 describe('siteApiKeyMigrationService insert boundary', () => {
   let db: DbModule['db'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let schema: DbModule['schema'];
   let migrateSiteApiKeysToAccounts: MigrationModule['migrateSiteApiKeysToAccounts'];
   let dataDir = '';
@@ -31,6 +32,7 @@ describe('siteApiKeyMigrationService insert boundary', () => {
     const dbModule = await import('../db/index.js');
     const migrationModule = await import('./siteApiKeyMigrationService.js');
     db = dbModule.db;
+    closeDbConnections = dbModule.closeDbConnections;
     schema = dbModule.schema;
     migrateSiteApiKeysToAccounts = migrationModule.migrateSiteApiKeysToAccounts;
   });
@@ -43,6 +45,7 @@ describe('siteApiKeyMigrationService insert boundary', () => {
 
   afterAll(async () => {
     if (dataDir) {
+      await closeDbConnections();
       rmSync(dataDir, { recursive: true, force: true });
     }
     delete process.env.DATA_DIR;

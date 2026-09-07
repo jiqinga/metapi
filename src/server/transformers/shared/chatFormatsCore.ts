@@ -1387,6 +1387,9 @@ export function normalizeUpstreamFinalResponse(
     if (terminalResponsesPayload) {
       return normalizeUpstreamFinalResponse(terminalResponsesPayload, fallbackModel, fallbackText);
     }
+    if (isRecord(payload.data) && !Array.isArray(payload.choices) && !Array.isArray(payload.candidates) && typeof payload.type !== 'string' && typeof payload.object !== 'string') {
+      return normalizeUpstreamFinalResponse(payload.data as Record<string, unknown>, fallbackModel, fallbackText);
+    }
   }
 
   if (isRecord(payload) && Array.isArray(payload.choices)) {
@@ -1488,6 +1491,10 @@ export function normalizeUpstreamStreamEvent(
   fallbackModel: string,
 ): NormalizedStreamEvent {
   if (!isRecord(payload)) return {};
+
+  if (isRecord(payload.data) && !Array.isArray(payload.choices) && !Array.isArray(payload.candidates) && typeof payload.type !== 'string') {
+    return normalizeUpstreamStreamEvent(payload.data as Record<string, unknown>, context, fallbackModel);
+  }
 
   if (Array.isArray(payload.choices)) {
     if (isNonEmptyString(payload.id)) context.id = payload.id;

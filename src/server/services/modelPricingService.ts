@@ -459,19 +459,25 @@ async function fetchPricingData(input: EstimateProxyCostInput): Promise<PricingD
     ? (baseUrl: string, token?: string) => fetchOneHubPricing(baseUrl, token)
     : (baseUrl: string, token?: string) => fetchCommonPricing(baseUrl, token, input.site.platform);
 
+  let lastError: unknown = null;
   for (const token of tokenCandidates) {
     try {
       const data = await fetcher(baseUrl, token);
       if (data && data.models.size > 0) return data;
-    } catch {}
+    } catch (err) {
+      lastError = err;
+    }
   }
 
   // Some sites expose pricing publicly.
   try {
     const data = await fetcher(baseUrl, undefined);
     if (data && data.models.size > 0) return data;
-  } catch {}
+  } catch (err) {
+    lastError = err;
+  }
 
+  console.warn(`[model-pricing] failed to fetch pricing data for ${baseUrl} (platform: ${input.site.platform})`, lastError);
   return null;
 }
 

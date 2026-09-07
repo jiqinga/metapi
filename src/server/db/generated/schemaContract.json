@@ -1,5 +1,97 @@
 {
   "tables": {
+    "account_disabled_models": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "account_hour_usage": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "bucket_start_utc": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "total_calls": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "success_calls": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "failed_calls": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_latency_ms": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "latency_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "account_tokens": {
       "columns": {
         "id": {
@@ -1371,6 +1463,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "upstream_endpoint": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1998,6 +2096,46 @@
         }
       }
     },
+    "site_model_protocol_overrides": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "protocols": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "sites": {
       "columns": {
         "id": {
@@ -2240,6 +2378,48 @@
     }
   },
   "indexes": [
+    {
+      "name": "account_disabled_models_account_id_idx",
+      "table": "account_disabled_models",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "account_disabled_models_account_model_unique",
+      "table": "account_disabled_models",
+      "columns": [
+        "account_id",
+        "model_name"
+      ],
+      "unique": true
+    },
+    {
+      "name": "account_hour_usage_account_id_idx",
+      "table": "account_hour_usage",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "account_hour_usage_hour_account_unique",
+      "table": "account_hour_usage",
+      "columns": [
+        "bucket_start_utc",
+        "account_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "account_hour_usage_hour_idx",
+      "table": "account_hour_usage",
+      "columns": [
+        "bucket_start_utc"
+      ],
+      "unique": false
+    },
     {
       "name": "account_tokens_account_enabled_idx",
       "table": "account_tokens",
@@ -2890,6 +3070,23 @@
       "unique": false
     },
     {
+      "name": "site_model_protocol_overrides_site_id_idx",
+      "table": "site_model_protocol_overrides",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_model_protocol_overrides_site_model_unique",
+      "table": "site_model_protocol_overrides",
+      "columns": [
+        "site_id",
+        "model_name"
+      ],
+      "unique": true
+    },
+    {
       "name": "sites_platform_url_unique",
       "table": "sites",
       "columns": [
@@ -2958,6 +3155,22 @@
     }
   ],
   "uniques": [
+    {
+      "name": "account_disabled_models_account_model_unique",
+      "table": "account_disabled_models",
+      "columns": [
+        "account_id",
+        "model_name"
+      ]
+    },
+    {
+      "name": "account_hour_usage_hour_account_unique",
+      "table": "account_hour_usage",
+      "columns": [
+        "bucket_start_utc",
+        "account_id"
+      ]
+    },
     {
       "name": "admin_snapshots_namespace_key_unique",
       "table": "admin_snapshots",
@@ -3076,6 +3289,14 @@
       ]
     },
     {
+      "name": "site_model_protocol_overrides_site_model_unique",
+      "table": "site_model_protocol_overrides",
+      "columns": [
+        "site_id",
+        "model_name"
+      ]
+    },
+    {
       "name": "sites_platform_url_unique",
       "table": "sites",
       "columns": [
@@ -3093,6 +3314,28 @@
     }
   ],
   "foreignKeys": [
+    {
+      "table": "account_disabled_models",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "account_hour_usage",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
     {
       "table": "account_tokens",
       "columns": [
@@ -3293,6 +3536,17 @@
     },
     {
       "table": "site_hour_usage",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_model_protocol_overrides",
       "columns": [
         "site_id"
       ],

@@ -91,7 +91,7 @@ describe('Settings proxy transport', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/proxy']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>

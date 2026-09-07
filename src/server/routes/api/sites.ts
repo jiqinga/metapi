@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { getInsertedRowId } from '../../db/insertHelpers.js';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
@@ -13,12 +13,15 @@ import {
   parseSiteCreatePayload,
   parseSiteDetectPayload,
   parseSiteDisabledModelsPayload,
+  parseSiteImportPayload,
+  parseSiteModelProtocolOverridesPayload,
   parseSiteUpdatePayload,
 } from '../../contracts/siteRoutePayloads.js';
 import { getSiteInitializationPreset } from '../../../shared/siteInitializationPresets.js';
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
+import { exportSites, importSites, previewSiteImport } from '../../services/siteTransferService.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -464,6 +467,79 @@ export async function sitesRoutes(app: FastifyInstance) {
     }));
   });
 
+  function normalizeSiteQueryPageSize(raw?: string): number {
+    const parsed = Number.parseInt(raw || '50', 10);
+    if (!Number.isFinite(parsed)) return 50;
+    return Math.max(1, Math.min(100, parsed));
+  }
+
+  function normalizeSiteQueryOffset(raw?: string): number {
+    const parsed = Number.parseInt(raw || '0', 10);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, parsed);
+  }
+
+  // Search + paginated sites query
+  app.get<{
+    Querystring: { search?: string; limit?: string; offset?: string };
+  }>('/api/sites/query', async (request, reply) => {
+    const search = (request.query.search || '').trim();
+    const limit = normalizeSiteQueryPageSize(request.query.limit);
+    const offset = normalizeSiteQueryOffset(request.query.offset);
+
+    const searchCondition = search
+      ? or(
+          sql`lower(coalesce(${schema.sites.name}, '')) like lower(${'%' + search + '%'})`,
+          sql`lower(coalesce(${schema.sites.url}, '')) like lower(${'%' + search + '%'})`,
+          sql`lower(coalesce(${schema.sites.externalCheckinUrl}, '')) like lower(${'%' + search + '%'})`,
+          sql`lower(coalesce(${schema.sites.platform}, '')) like lower(${'%' + search + '%'})`,
+        )
+      : undefined;
+
+    const [siteRows, totalRow] = await Promise.all([
+      db
+        .select()
+        .from(schema.sites)
+        .where(searchCondition)
+        .orderBy(asc(schema.sites.id))
+        .limit(limit)
+        .offset(offset)
+        .all(),
+      db
+        .select({ total: sql<number>`count(*)` })
+        .from(schema.sites)
+        .where(searchCondition)
+        .get(),
+    ]);
+
+    const siteRowsWithApiEndpoints = await attachSiteApiEndpoints(siteRows);
+    const accountRows = await db.select({
+      siteId: schema.accounts.siteId,
+      balance: schema.accounts.balance,
+      extraConfig: schema.accounts.extraConfig,
+    }).from(schema.accounts).all();
+
+    const totalBalanceBySiteId: Record<number, number> = {};
+    const subscriptionBySiteId: Record<number, SiteSubscriptionAggregate | undefined> = {};
+    for (const row of accountRows) {
+      totalBalanceBySiteId[row.siteId] = roundMetric((totalBalanceBySiteId[row.siteId] || 0) + Number(row.balance || 0));
+      subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
+    }
+
+    const items = siteRowsWithApiEndpoints.map((site) => ({
+      ...site,
+      totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
+      subscriptionSummary: subscriptionBySiteId[site.id] || null,
+    }));
+
+    return {
+      items,
+      total: Number(totalRow?.total || 0),
+      page: Math.floor(offset / limit) + 1,
+      pageSize: limit,
+    };
+  });
+
   // Add a site
   app.post<{ Body: unknown }>('/api/sites', async (request, reply) => {
     const parsedBody = parseSiteCreatePayload(request.body);
@@ -561,7 +637,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'initializationPresetId does not match the selected platform.' });
     }
     if (!detectedPlatform) {
-      return { error: 'Could not detect platform. Please specify manually.' };
+      detectedPlatform = 'openai';
     }
     const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, canonicalUrl);
     if (conflictingSite) {
@@ -888,6 +964,79 @@ export async function sitesRoutes(app: FastifyInstance) {
     return { siteId: id, models: uniqueModels };
   });
 
+  // Get manual per-model protocol overrides for a site
+  app.get<{ Params: { id: string } }>('/api/sites/:id/model-protocol-overrides', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const rows = await db.select({
+      modelName: schema.siteModelProtocolOverrides.modelName,
+      protocols: schema.siteModelProtocolOverrides.protocols,
+    })
+      .from(schema.siteModelProtocolOverrides)
+      .where(eq(schema.siteModelProtocolOverrides.siteId, id))
+      .all();
+    const overrides = rows.map((r) => {
+      let protocols: string[] = [];
+      try { protocols = JSON.parse(r.protocols); } catch { protocols = []; }
+      return { modelName: r.modelName, protocols: Array.isArray(protocols) ? protocols : [] };
+    });
+    return { siteId: id, overrides };
+  });
+
+  // Update manual per-model protocol overrides for a site (full replace)
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/sites/:id/model-protocol-overrides', async (request, reply) => {
+    const parsedBody = parseSiteModelProtocolOverridesPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ error: parsedBody.error });
+    }
+
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const rawOverrides = parsedBody.data.overrides ?? [];
+    const overrides = rawOverrides
+      .map((entry) => ({
+        modelName: entry.modelName.trim(),
+        protocols: Array.from(new Set(entry.protocols)),
+      }))
+      .filter((entry) => entry.modelName.length > 0 && entry.protocols.length > 0);
+    const seen = new Set<string>();
+    const uniqueOverrides = overrides.filter((entry) => {
+      const key = entry.modelName.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    await db.delete(schema.siteModelProtocolOverrides)
+      .where(eq(schema.siteModelProtocolOverrides.siteId, id))
+      .run();
+
+    if (uniqueOverrides.length > 0) {
+      await db.insert(schema.siteModelProtocolOverrides).values(
+        uniqueOverrides.map((entry) => ({
+          siteId: id,
+          modelName: entry.modelName,
+          protocols: JSON.stringify(entry.protocols),
+        })),
+      ).run();
+    }
+
+    invalidateSiteCaches();
+    return { siteId: id, overrides: uniqueOverrides };
+  });
+
   // Get all discovered models for a site (from model_availability and token_model_availability)
   app.get<{ Params: { id: string } }>('/api/sites/:id/available-models', async (request, reply) => {
     const id = parseInt(request.params.id);
@@ -1000,6 +1149,49 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const result = await detectSite(parsedBody.data.url);
-    return result || { error: 'Could not detect platform' };
+    if (!result) {
+      return { url: parsedBody.data.url, platform: 'openai' };
+    }
+    return result;
+  });
+
+  // Export sites (all or selected by ids)
+  app.get<{ Querystring: { ids?: string; includeConnections?: string } }>('/api/sites/export', async (request) => {
+    const idsRaw = (request.query.ids || '').trim();
+    const ids = idsRaw
+      ? idsRaw.split(',').map((s) => Number.parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n) && n > 0)
+      : undefined;
+    const includeConnections = ['1', 'true', 'yes'].includes((request.query.includeConnections || '').trim().toLowerCase());
+    return await exportSites(ids, includeConnections);
+  });
+
+  // Import sites (non-destructive merge)
+  app.post<{ Body: unknown }>('/api/sites/import', async (request, reply) => {
+    const parsed = parseSiteImportPayload(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error });
+    }
+
+    try {
+      const result = await importSites(parsed.data.data);
+      invalidateSiteCaches();
+      return result;
+    } catch (err: any) {
+      return reply.code(400).send({ error: err?.message || '导入失败' });
+    }
+  });
+
+  // Preview site import (dry-run, no writes)
+  app.post<{ Body: unknown }>('/api/sites/import/preview', async (request, reply) => {
+    const parsed = parseSiteImportPayload(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error });
+    }
+
+    try {
+      return await previewSiteImport(parsed.data.data);
+    } catch (err: any) {
+      return reply.code(400).send({ error: err?.message || '预览失败' });
+    }
   });
 }

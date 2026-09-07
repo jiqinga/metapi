@@ -8,6 +8,7 @@ import { installAccountsSnapshotCompat } from './testApiCompat.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAccounts: vi.fn(),
+    getAccountsQuery: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getSites: vi.fn(),
     batchUpdateAccounts: vi.fn(),
@@ -25,6 +26,8 @@ vi.mock('../components/useIsMobile.js', () => ({
 
 async function flushMicrotasks() {
   await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -52,7 +55,7 @@ describe('Accounts mobile actions', () => {
     apiMock.getSites.mockResolvedValue([
       { id: 1, name: 'Site A', platform: 'new-api', status: 'active' },
     ]);
-    apiMock.getAccounts.mockResolvedValue([
+    const testAccounts = [
       {
         id: 1,
         siteId: 1,
@@ -69,7 +72,9 @@ describe('Accounts mobile actions', () => {
         status: 'active',
         site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
       },
-    ]);
+    ];
+    apiMock.getAccounts.mockResolvedValue(testAccounts);
+    apiMock.getAccountsQuery.mockResolvedValue({ items: testAccounts, total: 2, page: 1, pageSize: 50 });
     apiMock.batchUpdateAccounts.mockResolvedValue({
       success: true,
       successIds: [1, 2],
@@ -127,6 +132,7 @@ describe('Accounts mobile actions', () => {
           username: 'alpha',
           accessToken: 'session-alpha',
           status: 'active',
+          credentialMode: 'session',
           site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
         },
         {
@@ -135,13 +141,22 @@ describe('Accounts mobile actions', () => {
           username: 'beta',
           accessToken: '',
           status: 'active',
+          credentialMode: 'apikey',
           site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
         },
       ]);
+      apiMock.getAccountsQuery.mockImplementation(async (params?: any) => {
+        const allAccounts = await apiMock.getAccounts();
+        const segment = params?.segment;
+        const items = segment === 'apikey'
+          ? allAccounts.filter((a: any) => a.credentialMode === 'apikey')
+          : allAccounts.filter((a: any) => a.credentialMode !== 'apikey');
+        return { items, total: items.length, page: 1, pageSize: 50 };
+      });
 
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/accounts']}>
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
             <ToastProvider>
               <Accounts />
             </ToastProvider>
@@ -150,47 +165,46 @@ describe('Accounts mobile actions', () => {
       });
       await flushMicrotasks();
 
-      const sessionCheckbox = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'checkbox'
-        && node.props['aria-label'] === '选择账号 alpha'
-      ));
-      await act(async () => {
-        sessionCheckbox.props.onChange({ target: { checked: true } });
-      });
-      await flushMicrotasks();
-
-      const apiKeySegmentButton = findButtonByText(root.root, 'API Key管理');
-      await act(async () => {
-        apiKeySegmentButton.props.onClick();
-      });
-      await flushMicrotasks();
-
+      // API Key segment shows only beta
       const selectAllButton = root.root.find((node) => node.props['data-testid'] === 'accounts-mobile-select-all');
       await act(async () => {
         selectAllButton.props.onClick();
       });
       await flushMicrotasks();
-      expect(collectText(root.root)).toContain('已选 2 项');
+      expect(collectText(root.root)).toContain('已选 1 项');
 
+      // Switch to session segment — beta selection is pruned by load()
+      const sessionSegmentButton = findButtonByText(root.root, '账号管理');
+      await act(async () => {
+        sessionSegmentButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      // Session segment shows alpha; select all visible
+      const sessionSelectAll = root.root.find((node) => node.props['data-testid'] === 'accounts-mobile-select-all');
+      await act(async () => {
+        sessionSelectAll.props.onClick();
+      });
+      await flushMicrotasks();
+      expect(collectText(root.root)).toContain('已选 1 项');
+
+      // Deselect all visible — clears only the session segment accounts
       const clearVisibleButton = root.root.find((node) => node.props['data-testid'] === 'accounts-mobile-select-all');
       await act(async () => {
         clearVisibleButton.props.onClick();
       });
       await flushMicrotasks();
 
-      expect(collectText(root.root)).toContain('已选 1 项');
+      // No selection banner when 0 selected
+      expect(collectText(root.root)).not.toContain('已选');
 
-      const batchButton = root.root.find((node) => node.props['data-testid'] === 'accounts-batch-refresh-balance');
+      // Switch back to API Key — beta was already pruned, no selection remains
+      const apiKeySegmentButton = findButtonByText(root.root, 'API Key管理');
       await act(async () => {
-        batchButton.props.onClick();
+        apiKeySegmentButton.props.onClick();
       });
       await flushMicrotasks();
-
-      expect(apiMock.batchUpdateAccounts).toHaveBeenLastCalledWith({
-        ids: [1],
-        action: 'refreshBalance',
-      });
+      expect(collectText(root.root)).not.toContain('已选');
     } finally {
       root?.unmount();
     }

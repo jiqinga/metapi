@@ -166,11 +166,28 @@ export function inferRequiredEndpointFromProtocolError(
   return null;
 }
 
+function inferSuggestedEndpointFromInsteadPhrase(
+  upstreamErrorText?: string | null,
+): CompatibilityEndpoint | null {
+  const text = (upstreamErrorText || '').toLowerCase();
+  if (!text) return null;
+  if (/use\s+\/v1\/chat\/completions\s+instead/.test(text)) return 'chat';
+  if (/use\s+\/v1\/messages\s+instead/.test(text)) return 'messages';
+  if (/use\s+\/v1\/responses\s+instead/.test(text)) return 'responses';
+  return null;
+}
+
 export function inferSuggestedEndpointFromUpstreamError(
   upstreamErrorText?: string | null,
 ): CompatibilityEndpoint | null {
   const requiredEndpoint = inferRequiredEndpointFromProtocolError(upstreamErrorText);
   if (requiredEndpoint) return requiredEndpoint;
+
+  // "use /v1/chat/completions instead" style errors name the correct endpoint
+  // explicitly; that suggestion outranks a bare endpoint mention, because the
+  // failing endpoint is usually mentioned first in the same sentence.
+  const insteadEndpoint = inferSuggestedEndpointFromInsteadPhrase(upstreamErrorText);
+  if (insteadEndpoint) return insteadEndpoint;
 
   const parsed = parseEndpointErrorShape(upstreamErrorText);
   return (
@@ -275,6 +292,8 @@ export function isEndpointDowngradeError(status: number, upstreamErrorText?: str
     || text.includes('unrecognized request url')
     || text.includes('no route matched')
     || text.includes('does not exist')
+    || /is\s+not\s+supported\s+on\s+(the\s+)?\/v1\/(chat\/completions|messages|responses)/.test(text)
+    || /use\s+\/v1\/(chat\/completions|messages|responses)\s+instead/.test(text)
     || (
       text.includes('openai_error')
       && endpointMismatchHint

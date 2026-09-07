@@ -2,6 +2,7 @@ import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { outboundFetch } from '../../httpClient.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
 import {
   buildEndpointModelContextLengthScope,
@@ -721,7 +722,6 @@ export class NewApiAdapter extends BasePlatformAdapter {
     url: string,
     options?: UndiciRequestInit,
   ): Promise<{ data: T | null; cookieHeader: string }> {
-    const { fetch } = await import('undici');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
@@ -741,7 +741,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         headers,
       };
       const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
-      const res = await fetch(url, proxiedRequestOptions);
+      const res = await outboundFetch(url, proxiedRequestOptions);
       const text = await res.text();
       const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
       if (typeof getSetCookie === 'function') {
@@ -877,21 +877,32 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
-  private async getOpenAiModels(baseUrl: string, token: string, contextSourceScope?: string): Promise<string[]> {
+  /**
+   * Fetch /v1/models with a Bearer token.
+   * Returns { ok, models }: ok=true means the upstream responded 200 with
+   * parseable JSON (token is valid as an API key), even if models is empty.
+   * ok=false means the request failed (network error, non-2xx, shield block).
+   */
+  private async getOpenAiModels(
+    baseUrl: string,
+    token: string,
+    contextSourceScope?: string,
+  ): Promise<{ ok: boolean; models: string[] }> {
     const sourceScope = contextSourceScope || buildEndpointModelContextLengthScope(baseUrl);
     const shouldTryShieldCookie = this.platformName === 'anyrouter' || token.includes('=');
     if (shouldTryShieldCookie) {
       const shieldModels = await this.getOpenAiModelsViaShieldCookie(baseUrl, token, sourceScope);
-      if (shieldModels.length > 0) return shieldModels;
+      if (shieldModels.length > 0) return { ok: true, models: shieldModels };
     }
 
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      return this.extractOpenAiModels(res, sourceScope);
+      // HTTP 200 + valid JSON: token is valid as an API key, even if data is [].
+      return { ok: true, models: this.extractOpenAiModels(res, sourceScope) };
     } catch {
-      return [];
+      return { ok: false, models: [] };
     }
   }
 
@@ -1000,9 +1011,12 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   override async verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
-    if (openAiModels.length > 0) {
-      return { tokenType: 'apikey', models: openAiModels };
+    const openAiResult = await this.getOpenAiModels(baseUrl, token);
+    // If /v1/models responded 200 with valid JSON, the token is a valid API key
+    // — even if the model list is empty. Don't fall through to session-token
+    // probes, which would waste time on slow upstreams and trigger timeouts.
+    if (openAiResult.ok) {
+      return { tokenType: 'apikey', models: openAiResult.models };
     }
 
     try {
@@ -1241,8 +1255,11 @@ export class NewApiAdapter extends BasePlatformAdapter {
     platformUserId?: number,
     contextSourceScope?: string,
   ): Promise<string[]> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token, contextSourceScope);
-    if (openAiModels.length > 0) return openAiModels;
+    const openAiResult = await this.getOpenAiModels(baseUrl, token, contextSourceScope);
+    // If /v1/models responded 200 with valid JSON, the token is a valid API key.
+    // Return immediately even on empty model list — no point probing session
+    // endpoints, which would only burn the verify timeout on slow upstreams.
+    if (openAiResult.ok) return openAiResult.models;
 
     const userId = platformUserId || await this.discoverUserId(baseUrl, token);
     if (userId) {

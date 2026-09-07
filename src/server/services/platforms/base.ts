@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { outboundFetch } from '../../httpClient.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -220,7 +221,6 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   }
 
   protected async fetchJson<T>(url: string, options?: UndiciRequestInit): Promise<T> {
-    const { fetch } = await import('undici');
     const requestOptions: UndiciRequestInit = {
       ...options,
       body: options?.body ?? undefined,
@@ -230,7 +230,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
       },
     };
     const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
-    const res = await fetch(url, proxiedRequestOptions);
+    const res = await outboundFetch(url, proxiedRequestOptions);
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     }

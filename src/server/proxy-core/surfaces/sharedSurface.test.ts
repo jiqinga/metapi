@@ -402,6 +402,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       errorMessage: 'normalized error',
       retryCount: 1,
       createdAt: '2026-03-21 22:00:00',
+      upstreamEndpoint: 'responses',
     });
   });
 
@@ -446,7 +447,7 @@ describe('selectSurfaceChannelForAttempt', () => {
         method: 'POST',
         headers: { authorization: 'Bearer test' },
         body: JSON.stringify({ model: 'gpt-5.2', input: 'hello' }),
-      }, 'http://proxy.example.com');
+      }, 'http://proxy.example.com', '{"proxyUrl":"http://proxy.example.com"}');
       expect(init).toEqual({
         method: 'POST',
         headers: { authorization: 'Bearer test' },

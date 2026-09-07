@@ -99,7 +99,7 @@ export function buildEventNavigationPath(event: {
     return buildAnnouncementFocusPath(relatedId);
   }
   if (relatedType === 'update_center') {
-    return '/settings';
+    return '/settings/maintenance';
   }
   if (relatedType === 'route') {
     return '/routes';

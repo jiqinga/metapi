@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
-import { db, schema, runtimeDbDialect } from "../../db/index.js";
+import { db, schema, runtimeDbDialect, hasProxyLogUpstreamEndpointColumn } from "../../db/index.js";
 import { insertAndGetById } from "../../db/insertHelpers.js";
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
 import { refreshBalance } from "../../services/balanceService.js";
 import { getAdapter } from "../../services/platforms/index.js";
 import {
@@ -15,6 +15,7 @@ import {
   hasOauthProvider,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
+  normalizeCloakOverrideInput,
   normalizeCredentialMode as normalizeCredentialModeInput,
   resolvePlatformUserId,
   type AccountCredentialMode,
@@ -24,7 +25,7 @@ import { applyAccountUpdateWorkflow } from "../../services/accountUpdateWorkflow
 import { startBackgroundTask } from "../../services/backgroundTaskService.js";
 import { parseCheckinRewardAmount } from "../../services/checkinRewardParser.js";
 import { estimateRewardWithTodayIncomeFallback } from "../../services/todayIncomeRewardService.js";
-import { getLocalDayRangeUtc } from "../../services/localTimeService.js";
+import { getLocalDayRangeUtc, getLocalHourAnchor, getLocalHourRangeStartUtc } from "../../services/localTimeService.js";
 import {
   buildRuntimeHealthForAccount,
   setAccountRuntimeHealth,
@@ -37,11 +38,13 @@ import {
   withSiteRecordProxyRequestInit,
 } from "../../services/siteProxy.js";
 import { createRateLimitGuard } from "../../middleware/requestRateLimit.js";
-import { getAccountsSnapshot } from "../../services/accountsOverviewService.js";
+import { getAccountsSnapshot, loadAccountModelUsage } from "../../services/accountsOverviewService.js";
+import { buildAccountAvailabilitySummariesFromHourlyAggregates } from "../../services/statsShared.js";
 import {
   type AccountCreatePayload,
   parseAccountBatchPayload,
   parseAccountCreatePayload,
+  parseAccountDisabledModelsPayload,
   parseAccountHealthRefreshPayload,
   parseAccountLoginPayload,
   parseAccountManualModelsPayload,
@@ -59,6 +62,8 @@ import {
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
 import { removeManualModelsFromAccount } from "../../services/accountManualModelService.js";
+import { parseSiteCustomHeadersInput } from "../../services/siteCustomHeaders.js";
+import { config } from "../../config.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -97,6 +102,36 @@ const limitAccountVerifyToken = createRateLimitGuard({
   max: 5,
   windowMs: 60_000,
 });
+
+/**
+ * Normalizes a model's raw `supported_endpoint_types` entries (e.g. `/v1/messages`,
+ * `anthropic`, `openai`) into deduplicated display labels for the model modal.
+ * Mirrors the keyword matching in `upstreamEndpointDerivation.normalizeEndpointTypes`
+ * without coupling this route to that internal helper.
+ */
+function resolveProtocolLabels(rawTypes: unknown[]): string[] {
+  const resolved = new Set<string>();
+  for (const value of rawTypes) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) continue;
+    if (raw.includes("/v1/messages") || raw === "messages" || raw.includes("anthropic") || raw.includes("claude")) {
+      resolved.add("messages");
+    }
+    if (raw.includes("/v1/responses") || raw === "responses" || raw.includes("response")) {
+      resolved.add("responses");
+    }
+    if (raw.includes("/v1/chat/completions") || raw.includes("chat/completions") || raw === "chat" || raw === "chat_completions" || raw === "completions" || raw.includes("chat")) {
+      resolved.add("chat");
+    }
+    if (raw === "openai" || raw.includes("openai")) {
+      resolved.add("chat");
+      resolved.add("responses");
+    }
+  }
+  // Stable order so the UI shows protocols consistently regardless of input order.
+  const order = ["chat", "messages", "responses"];
+  return order.filter((endpoint) => resolved.has(endpoint));
+}
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -236,7 +271,7 @@ type LoginFailureInfo = {
 };
 
 const ACCOUNT_HEALTH_REFRESH_TIMEOUT_MS = 10_000;
-const ACCOUNT_VERIFY_TIMEOUT_MS = 10_000;
+const ACCOUNT_VERIFY_TIMEOUT_MS = config.accountVerifyTimeoutMs;
 const ACCOUNT_VERIFY_DIAG_TIMEOUT_MS = 2_500;
 
 function normalizeLoginFailure(
@@ -1515,6 +1550,62 @@ export async function accountsRoutes(app: FastifyInstance) {
         });
       }
 
+      if (
+        Object.prototype.hasOwnProperty.call(body, "customHeaders") ||
+        Object.prototype.hasOwnProperty.call(
+          body,
+          "customHeadersOverrideRequestHeaders",
+        )
+      ) {
+        const parsedHeaders = parseSiteCustomHeadersInput(
+          (body as Record<string, unknown>).customHeaders,
+        );
+        if (!parsedHeaders.valid) {
+          return reply
+            .code(400)
+            .send({ message: parsedHeaders.error || "Invalid customHeaders" });
+        }
+        const rawOverride = (body as Record<string, unknown>)
+          .customHeadersOverrideRequestHeaders;
+        if (rawOverride !== undefined && typeof rawOverride !== "boolean") {
+          return reply.code(400).send({
+            message:
+              "Invalid customHeadersOverrideRequestHeaders value. Expected boolean.",
+          });
+        }
+        const baseHeadersExtraConfig =
+          typeof updates.extraConfig === "string"
+            ? updates.extraConfig
+            : account.extraConfig;
+        updates.extraConfig = mergeAccountExtraConfig(baseHeadersExtraConfig, {
+          ...(parsedHeaders.present
+            ? { customHeaders: parsedHeaders.customHeaders ?? undefined }
+            : {}),
+          ...(rawOverride === undefined
+            ? {}
+            : { customHeadersOverrideRequestHeaders: rawOverride || undefined }),
+        });
+      }
+
+      for (const field of ["claudeCodeCloak", "codexCloak"] as const) {
+        if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+        const normalized = normalizeCloakOverrideInput(
+          (body as Record<string, unknown>)[field],
+        );
+        if (normalized === undefined) {
+          return reply.code(400).send({
+            message: `Invalid ${field} value. Expected "inherit", "on" or "off".`,
+          });
+        }
+        const baseCloakExtraConfig =
+          typeof updates.extraConfig === "string"
+            ? updates.extraConfig
+            : account.extraConfig;
+        updates.extraConfig = mergeAccountExtraConfig(baseCloakExtraConfig, {
+          [field]: normalized ?? undefined,
+        });
+      }
+
       const nextAccessToken =
         typeof updates.accessToken === "string"
           ? updates.accessToken
@@ -1788,18 +1879,118 @@ export async function accountsRoutes(app: FastifyInstance) {
         })
         .from(schema.siteDisabledModels)
         .where(eq(schema.siteDisabledModels.siteId, siteId))
-        .all();
+        .all() as Array<{ modelName: string }>;
 
       const disabledSet = new Set(disabledRows.map((r) => r.modelName));
 
+      // Get disabled models for this account (connection-level, takes
+      // precedence per connection in addition to the site-wide list)
+      const accountDisabledRows = await db
+        .select({
+          modelName: schema.accountDisabledModels.modelName,
+        })
+        .from(schema.accountDisabledModels)
+        .where(eq(schema.accountDisabledModels.accountId, accountId))
+        .all() as Array<{ modelName: string }>;
+
+      const accountDisabledSet = new Set(accountDisabledRows.map((r) => r.modelName));
+
+      // Load manual per-model protocol overrides for this site so the modal can
+      // show which models have a manual override and let the user edit it.
+      const manualOverridesByModel = new Map<string, string[]>();
+      try {
+        const overrideRows = await db
+          .select({
+            modelName: schema.siteModelProtocolOverrides.modelName,
+            protocols: schema.siteModelProtocolOverrides.protocols,
+          })
+          .from(schema.siteModelProtocolOverrides)
+          .where(eq(schema.siteModelProtocolOverrides.siteId, siteId))
+          .all();
+        for (const row of overrideRows) {
+          let parsed: unknown;
+          try { parsed = JSON.parse(row.protocols); } catch { parsed = []; }
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            manualOverridesByModel.set(row.modelName.toLowerCase(), parsed as string[]);
+          }
+        }
+      } catch (err) {
+        console.warn('[accounts/models] failed to load manual protocol overrides', err);
+      }
+
+      // Derive per-model protocols from real successful proxy logs. We read the
+      // structured `upstream_endpoint` column directly; for older rows written
+      // before the column existed we fall back to parsing the upstream path out
+      // of the error_message text prefix. This reflects which protocols
+      // actually worked, rather than guessing from the platform or trusting an
+      // optional catalog field.
+      const protocolsByModelFromLogs = new Map<string, string[]>();
+      try {
+        const hasUpstreamEndpointColumn = await hasProxyLogUpstreamEndpointColumn();
+        const recentSuccessLogs = await db
+          .select({
+            modelActual: schema.proxyLogs.modelActual,
+            errorMessage: schema.proxyLogs.errorMessage,
+            ...(hasUpstreamEndpointColumn
+              ? { upstreamEndpoint: schema.proxyLogs.upstreamEndpoint }
+              : {}),
+          })
+          .from(schema.proxyLogs)
+          .where(and(
+            eq(schema.proxyLogs.accountId, accountId),
+            eq(schema.proxyLogs.status, 'success'),
+            gte(schema.proxyLogs.createdAt, sql.raw(`datetime('now', '-${config.modelProtocolBadgeWindowDays} days')`)),
+          ))
+          .all();
+        const collectedByModel = new Map<string, Set<string>>();
+        for (const row of recentSuccessLogs) {
+          if (!row.modelActual) continue;
+          const key = row.modelActual.toLowerCase();
+          let set = collectedByModel.get(key);
+          if (!set) { set = new Set(); collectedByModel.set(key, set); }
+          // Prefer the structured column when available.
+          const endpoint = (row as { upstreamEndpoint?: string | null }).upstreamEndpoint;
+          if (endpoint && ['chat', 'messages', 'responses'].includes(endpoint)) {
+            set.add(endpoint);
+            continue;
+          }
+          // Fall back to parsing the error_message prefix for legacy rows.
+          if (!row.errorMessage) continue;
+          const match = row.errorMessage.match(/\[upstream:([^\]]+)\]/i);
+          if (!match) continue;
+          const resolved = resolveProtocolLabels([match[1]]);
+          for (const proto of resolved) set.add(proto);
+        }
+        const protocolOrder = ["chat", "messages", "responses"];
+        for (const [modelName, set] of collectedByModel) {
+          protocolsByModelFromLogs.set(
+            modelName,
+            protocolOrder.filter((p) => set.has(p)),
+          );
+        }
+      } catch (err) {
+        console.warn('[accounts/models] failed to derive protocols from proxy logs', err);
+      }
+
       const models = modelRows
         .filter((r) => r.available)
-        .map((r) => ({
-          name: r.modelName,
-          latencyMs: r.latencyMs,
-          disabled: disabledSet.has(r.modelName),
-          isManual: !!r.isManual,
-        }))
+        .map((r) => {
+          // Protocol badges reflect only real successful requests from proxy
+          // logs. Models that have never been called show no protocol label
+          // rather than trusting the upstream catalog's claims.
+          const fromLogs = protocolsByModelFromLogs.get(r.modelName.toLowerCase());
+          const autoProtocols = fromLogs ?? [];
+          const manualProtocols = manualOverridesByModel.get(r.modelName.toLowerCase()) ?? null;
+          return {
+            name: r.modelName,
+            latencyMs: r.latencyMs,
+            disabled: disabledSet.has(r.modelName) || accountDisabledSet.has(r.modelName),
+            isManual: !!r.isManual,
+            protocols: autoProtocols,
+            manualProtocols,
+            effectiveProtocols: manualProtocols ?? autoProtocols,
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name));
 
       return {
@@ -1808,9 +1999,289 @@ export async function accountsRoutes(app: FastifyInstance) {
         models,
         totalCount: models.length,
         disabledCount: models.filter((m) => m.disabled).length,
+        siteDisabledModels: Array.from(disabledSet).sort((a, b) => a.localeCompare(b)),
+        accountDisabledModels: Array.from(accountDisabledSet).sort((a, b) => a.localeCompare(b)),
       };
     },
   );
+
+  // Get disabled models for an account (connection-level list)
+  app.get<{ Params: { id: string } }>(
+    "/api/accounts/:id/disabled-models",
+    async (request, reply) => {
+      const accountId = parseInt(request.params.id, 10);
+      if (!Number.isFinite(accountId) || accountId <= 0) {
+        return reply.code(400).send({ message: "账号 ID 无效" });
+      }
+
+      const account = await db
+        .select({ id: schema.accounts.id })
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId))
+        .get();
+      if (!account) {
+        return reply.code(404).send({ message: "账号不存在" });
+      }
+
+      const rows = await db
+        .select({ modelName: schema.accountDisabledModels.modelName })
+        .from(schema.accountDisabledModels)
+        .where(eq(schema.accountDisabledModels.accountId, accountId))
+        .all() as Array<{ modelName: string }>;
+      const models = rows.map((r) => r.modelName).sort((a, b) => a.localeCompare(b));
+
+      return { accountId, models };
+    },
+  );
+
+  // Update disabled models for an account (full replace, connection-level)
+  app.put<{ Params: { id: string }; Body: unknown }>(
+    "/api/accounts/:id/disabled-models",
+    async (request, reply) => {
+      const parsedBody = parseAccountDisabledModelsPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+
+      const accountId = parseInt(request.params.id, 10);
+      if (!Number.isFinite(accountId) || accountId <= 0) {
+        return reply.code(400).send({ message: "账号 ID 无效" });
+      }
+
+      const account = await db
+        .select({ id: schema.accounts.id })
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId))
+        .get();
+      if (!account) {
+        return reply.code(404).send({ message: "账号不存在" });
+      }
+
+      const rawModels = parsedBody.data.models;
+      if (!Array.isArray(rawModels)) {
+        return reply.code(400).send({ message: "models must be an array of strings" });
+      }
+      const models = rawModels
+        .filter((m): m is string => typeof m === "string")
+        .map((m) => m.trim())
+        .filter((m) => m.length > 0);
+      const uniqueModels = Array.from(new Set(models));
+
+      await db.delete(schema.accountDisabledModels)
+        .where(eq(schema.accountDisabledModels.accountId, accountId))
+        .run();
+
+      if (uniqueModels.length > 0) {
+        await db.insert(schema.accountDisabledModels).values(
+          uniqueModels.map((modelName) => ({ accountId, modelName })),
+        ).run();
+      }
+
+      await rebuildRoutesBestEffort();
+      return { accountId, models: uniqueModels };
+    },
+  );
+
+  // Per-model usage breakdown for an account (derived from proxy_logs lookback)
+  app.get<{ Params: { id: string }; Querystring: { hours?: string } }>(
+    "/api/accounts/:id/model-usage",
+    async (request, reply) => {
+      const accountId = parseInt(request.params.id, 10);
+      if (!Number.isFinite(accountId) || accountId <= 0) {
+        return reply.code(400).send({ message: "账号 ID 无效" });
+      }
+      const account = await db
+        .select({ id: schema.accounts.id })
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId))
+        .get();
+      if (!account) {
+        return reply.code(404).send({ message: "账号不存在" });
+      }
+      const rawHours = request.query.hours
+        ? Number(request.query.hours)
+        : NaN;
+      const result = await loadAccountModelUsage(
+        accountId,
+        Number.isFinite(rawHours) && rawHours > 0 ? rawHours : undefined,
+      );
+      return reply.send(result);
+    },
+  );
+
+  function normalizeAccountQueryPageSize(raw?: string): number {
+    const parsed = Number.parseInt(raw || "50", 10);
+    if (!Number.isFinite(parsed)) return 50;
+    return Math.max(1, Math.min(100, parsed));
+  }
+
+  function normalizeAccountQueryOffset(raw?: string): number {
+    const parsed = Number.parseInt(raw || "0", 10);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, parsed);
+  }
+
+  // Search + paginated accounts query
+  app.get<{
+    Querystring: {
+      search?: string;
+      segment?: string;
+      siteId?: string;
+      status?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/api/accounts/query", async (request, reply) => {
+    const search = (request.query.search || "").trim();
+    const segment = (request.query.segment || "").trim().toLowerCase();
+    const siteId = request.query.siteId ? Number(request.query.siteId) : 0;
+    const status = (request.query.status || "").trim().toLowerCase();
+    const limit = normalizeAccountQueryPageSize(request.query.limit);
+    const offset = normalizeAccountQueryOffset(request.query.offset);
+
+    const searchCondition = search
+      ? or(
+          sql`lower(coalesce(${schema.accounts.username}, '')) like lower(${'%' + search + '%'})`,
+          sql`lower(coalesce(${schema.sites.name}, '')) like lower(${'%' + search + '%'})`,
+          sql`lower(coalesce(${schema.sites.platform}, '')) like lower(${'%' + search + '%'})`,
+          sql`lower(coalesce(${schema.sites.url}, '')) like lower(${'%' + search + '%'})`,
+        )
+      : undefined;
+
+    const filters: SQL[] = [];
+    if (searchCondition) filters.push(searchCondition);
+    if (siteId > 0) filters.push(eq(schema.accounts.siteId, siteId));
+    if (status === "active" || status === "disabled" || status === "expired") {
+      filters.push(eq(schema.accounts.status, status));
+    }
+    const whereCondition = filters.length > 0 ? and(...filters) : undefined;
+
+    const rows = await db
+      .select({
+        id: schema.accounts.id,
+        username: schema.accounts.username,
+        accessToken: schema.accounts.accessToken,
+        apiToken: schema.accounts.apiToken,
+        status: schema.accounts.status,
+        balance: schema.accounts.balance,
+        balanceUsed: schema.accounts.balanceUsed,
+        checkinEnabled: schema.accounts.checkinEnabled,
+        isPinned: schema.accounts.isPinned,
+        sortOrder: schema.accounts.sortOrder,
+        extraConfig: schema.accounts.extraConfig,
+        oauthProvider: schema.accounts.oauthProvider,
+        createdAt: schema.accounts.createdAt,
+        siteId: schema.sites.id,
+        siteName: schema.sites.name,
+        sitePlatform: schema.sites.platform,
+        siteStatus: schema.sites.status,
+        siteUrl: schema.sites.url,
+      })
+      .from(schema.accounts)
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(whereCondition)
+      .orderBy(asc(schema.accounts.id))
+      .all();
+
+    // segment filtering is applied in-memory because credentialMode is derived
+    // from extraConfig + accessToken (not a pure SQL column).
+    const segmentFiltered = segment
+      ? rows.filter((row) => resolveStoredCredentialMode(row as any) === segment)
+      : rows;
+
+    const total = segmentFiltered.length;
+    const pageRows = segmentFiltered.slice(offset, offset + limit);
+
+    // Enrich the current page with availability + lastCallAt (constrained to page account IDs).
+    const pageAccountIds = pageRows.map((row) => row.id);
+    const availabilityNow = getLocalHourAnchor();
+    const availabilitySinceUtc = getLocalHourRangeStartUtc(config.accountAvailabilityWindowHours, availabilityNow);
+
+    const [accountHourUsageRows, lastCallRows] = pageAccountIds.length > 0
+      ? await Promise.all([
+          db.select({
+            accountId: schema.accountHourUsage.accountId,
+            hourStartUtc: schema.accountHourUsage.bucketStartUtc,
+            totalRequests: schema.accountHourUsage.totalCalls,
+            successCount: schema.accountHourUsage.successCalls,
+            failedCount: schema.accountHourUsage.failedCalls,
+            totalLatencyMs: schema.accountHourUsage.totalLatencyMs,
+            latencyCount: schema.accountHourUsage.latencyCount,
+          })
+            .from(schema.accountHourUsage)
+            .where(and(
+              gte(schema.accountHourUsage.bucketStartUtc, availabilitySinceUtc),
+              inArray(schema.accountHourUsage.accountId, pageAccountIds),
+            ))
+            .all(),
+          db.select({
+            accountId: schema.proxyLogs.accountId,
+            lastCallAt: sql<string>`max(${schema.proxyLogs.createdAt})`,
+          })
+            .from(schema.proxyLogs)
+            .where(and(
+              sql`${schema.proxyLogs.accountId} is not null`,
+              inArray(schema.proxyLogs.accountId, pageAccountIds),
+            ))
+            .groupBy(schema.proxyLogs.accountId)
+            .all(),
+        ])
+      : [[], []];
+
+    const availabilityByAccount = buildAccountAvailabilitySummariesFromHourlyAggregates(
+      pageAccountIds,
+      accountHourUsageRows as any,
+      availabilityNow,
+    );
+    const lastCallByAccount: Record<number, string | null> = {};
+    for (const row of lastCallRows as any[]) {
+      const id = Number(row.accountId);
+      const trimmed = typeof row.lastCallAt === "string" ? row.lastCallAt.trim() : "";
+      if (id && trimmed) lastCallByAccount[id] = trimmed;
+    }
+
+    const items = pageRows.map((row) => {
+      const credentialMode = resolveStoredCredentialMode(row as any);
+      return {
+        id: row.id,
+        username: row.username,
+        accessToken: row.accessToken,
+        apiToken: row.apiToken,
+        status: row.status,
+        balance: row.balance,
+        balanceUsed: row.balanceUsed,
+        checkinEnabled: row.checkinEnabled,
+        isPinned: row.isPinned,
+        sortOrder: row.sortOrder,
+        extraConfig: row.extraConfig,
+        oauthProvider: row.oauthProvider,
+        siteId: row.siteId,
+        createdAt: row.createdAt,
+        credentialMode,
+        capabilities: buildCapabilitiesFromCredentialMode(
+          credentialMode,
+          hasSessionTokenValue(row.accessToken),
+          row as any,
+        ),
+        site: {
+          id: row.siteId,
+          name: row.siteName,
+          platform: row.sitePlatform,
+          status: row.siteStatus,
+          url: row.siteUrl,
+        },
+        availability: availabilityByAccount.get(row.id) || null,
+        lastCallAt: lastCallByAccount[row.id] || null,
+      };
+    });
+
+    return {
+      items,
+      total,
+      page: Math.floor(offset / limit) + 1,
+      pageSize: limit,
+    };
+  });
 
   // Add models manually to an account
   app.post<{ Params: { id: string }; Body: unknown }>(

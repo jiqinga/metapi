@@ -42,6 +42,7 @@ describe('backupService', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.siteAnnouncements).run();
     await db.delete(schema.siteDisabledModels).run();
+    await db.delete(schema.accountDisabledModels).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -162,6 +163,12 @@ describe('backupService', () => {
       createdAt: now,
     }).run();
 
+    await db.insert(schema.accountDisabledModels).values({
+      accountId: account.id,
+      modelName: 'gpt-hidden-per-key',
+      createdAt: now,
+    }).run();
+
     await db.insert(schema.siteApiEndpoints).values({
       siteId: site.id,
       url: 'https://api-roundtrip.example.com',
@@ -222,6 +229,9 @@ describe('backupService', () => {
     expect(exported.version).toBe('2.1');
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
+    ]);
+    expect(exported.accounts.accountDisabledModels).toEqual([
+      { accountId: account.id, modelName: 'gpt-hidden-per-key' },
     ]);
     expect(exported.accounts.siteApiEndpoints).toEqual([
       expect.objectContaining({
@@ -304,6 +314,10 @@ describe('backupService', () => {
     expect(restoredChannel?.sourceModel).toBe('gpt-4o');
     expect(restoredDisabledModels).toEqual([
       expect.objectContaining({ siteId: site.id, modelName: 'gpt-hidden' }),
+    ]);
+    const restoredAccountDisabledModels = await db.select().from(schema.accountDisabledModels).all();
+    expect(restoredAccountDisabledModels).toEqual([
+      expect.objectContaining({ accountId: account.id, modelName: 'gpt-hidden-per-key' }),
     ]);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-manual' && row.isManual)).toBe(true);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-discovered' && !row.isManual)).toBe(true);

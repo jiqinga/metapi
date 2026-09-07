@@ -37,6 +37,7 @@ const ModelTester = lazy(() => import('./pages/ModelTester.js'));
 const Monitors = lazy(() => import('./pages/Monitors.js'));
 const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));
 const SiteAnnouncements = lazy(() => import('./pages/SiteAnnouncements.js'));
+const UsageAnalytics = lazy(() => import('./pages/UsageAnalytics.js'));
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -416,6 +417,7 @@ export const sidebarGroups = [
       { to: '/checkin', label: '签到记录', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
       { to: '/routes', label: '路由', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
       { to: '/logs', label: '使用日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
+      { to: '/usage-analytics', label: '使用分析', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.25c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.25zM16.5 4.5c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v15.375c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.5z" /></svg> },
       { to: '/monitor', label: '可用性监控', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
     ],
   },
@@ -801,7 +803,7 @@ function AppShell() {
                     <NavLink
                       key={item.to}
                       to={item.to}
-                      end={item.to === '/' || item.to === '/settings'}
+                      end={item.to === '/'}
                       className={({ isActive }) => `mobile-nav-item ${isActive ? 'active' : ''}`}
                       onClick={() => setDrawerOpen(false)}
                     >
@@ -835,7 +837,7 @@ function AppShell() {
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    end={item.to === '/' || item.to === '/settings'}
+                    end={item.to === '/'}
                     className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}
                     data-tooltip={sidebarCollapsed ? t(item.label) : undefined}
                     aria-label={sidebarCollapsed ? t(item.label) : undefined}
@@ -868,8 +870,9 @@ function AppShell() {
                 <Route path="/checkin" element={<CheckinLog />} />
                 <Route path="/routes" element={<TokenRoutes />} />
                 <Route path="/logs" element={<ProxyLogs />} />
+                <Route path="/usage-analytics" element={<UsageAnalytics />} />
                 <Route path="/monitor" element={<Monitors />} />
-                <Route path="/settings" element={<Settings />} />
+                <Route path="/settings/*" element={<Settings />} />
                 <Route path="/downstream-keys" element={<DownstreamKeys />} />
                 <Route path="/events" element={<ProgramLogs />} />
                 <Route path="/settings/import-export" element={<ImportExport />} />

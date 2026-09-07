@@ -61,6 +61,11 @@ describe('Settings log cleanup schedule', () => {
       routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',
+      balanceRefreshEnabled: false,
+      balanceRefreshModelsEnabled: false,
+      checkinEnabled: false,
+      dailySummaryEnabled: false,
+      logCleanupEnabled: false,
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
     apiMock.getRoutesLite.mockResolvedValue([]);
@@ -83,7 +88,7 @@ describe('Settings log cleanup schedule', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/tasks']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -112,6 +117,11 @@ describe('Settings log cleanup schedule', () => {
         logCleanupUsageLogsEnabled: true,
         logCleanupProgramLogsEnabled: true,
         logCleanupRetentionDays: 14,
+        balanceRefreshEnabled: false,
+        balanceRefreshModelsEnabled: false,
+        checkinEnabled: false,
+        dailySummaryEnabled: false,
+        logCleanupEnabled: false,
       });
     } finally {
       root?.unmount();
@@ -125,7 +135,7 @@ describe('Settings log cleanup schedule', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/tasks']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>
@@ -156,7 +166,7 @@ describe('Settings log cleanup schedule', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter>
+          <MemoryRouter initialEntries={['/settings/tasks']}>
             <ToastProvider>
               <Settings />
             </ToastProvider>

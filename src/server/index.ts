@@ -5,6 +5,7 @@ import {
   buildFastifyOptions,
   config,
 } from './config.js';
+import { installGlobalOutboundDispatcher } from './httpClient.js';
 import { authMiddleware } from './middleware/auth.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
@@ -75,6 +76,7 @@ import {
   ensureProxyLogDownstreamApiKeyIdColumn,
   ensureProxyLogBillingDetailsColumn,
   ensureProxyLogStreamTimingColumns,
+  ensureProxyLogUpstreamEndpointColumn,
   ensureRouteGroupingCompatibilityColumns,
   ensureSiteCompatibilityColumns,
   runtimeDbDialect,
@@ -132,6 +134,10 @@ function hasExplicitLogCleanupSettings(settingsMap: Map<string, string>): boolea
   return LOG_CLEANUP_SETTING_KEYS.some((key) => settingsMap.has(key));
 }
 
+// Install the global outbound HTTP dispatcher before any upstream request is
+// made (schedulers, detection, model discovery, proxy forwarding).
+installGlobalOutboundDispatcher();
+
 // Ensure the current runtime database is bootstrapped before reading settings.
 await ensureRuntimeDatabaseReady({
   dialect: runtimeDbDialect,
@@ -186,6 +192,7 @@ try {
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(config.proxyLogRetentionDays);
   }
   await ensureProxyLogBillingDetailsColumn();
+  await ensureProxyLogUpstreamEndpointColumn();
   await repairStoredCreatedAtValues();
   await migrateSiteApiKeysToAccounts();
   await ensureDefaultSitesSeeded();

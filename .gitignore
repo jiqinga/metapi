@@ -26,3 +26,9 @@ docker/.env
 docs/plan/
 docs/plans/
 .ace-tool/
+
+# Local agent/tool artifacts
+.codegraph/
+.playwright-mcp/
+.spec-workflow/
+.zcode/

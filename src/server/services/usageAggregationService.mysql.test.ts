@@ -71,6 +71,17 @@ const siteHourUsage = sqliteTable('site_hour_usage', {
   updatedAt: text('updated_at'),
 });
 
+const accountHourUsage = sqliteTable('account_hour_usage', {
+  bucketStartUtc: text('bucket_start_utc'),
+  accountId: integer('account_id'),
+  totalCalls: integer('total_calls'),
+  successCalls: integer('success_calls'),
+  failedCalls: integer('failed_calls'),
+  totalLatencyMs: integer('total_latency_ms'),
+  latencyCount: integer('latency_count'),
+  updatedAt: text('updated_at'),
+});
+
 const modelDayUsage = sqliteTable('model_day_usage', {
   localDay: text('local_day'),
   siteId: integer('site_id'),
@@ -92,6 +103,7 @@ const schema = {
   sites,
   siteDayUsage,
   siteHourUsage,
+  accountHourUsage,
   modelDayUsage,
 };
 
@@ -100,6 +112,7 @@ type MockState = {
   proxyRows: Array<Record<string, unknown>>;
   siteDayRows: Array<Record<string, unknown>>;
   siteHourRows: Array<Record<string, unknown>>;
+  accountHourRows: Array<Record<string, unknown>>;
   modelDayRows: Array<Record<string, unknown>>;
   onDuplicateKeyUpdateTables: string[];
 };
@@ -109,6 +122,7 @@ const state: MockState = {
   proxyRows: [],
   siteDayRows: [],
   siteHourRows: [],
+  accountHourRows: [],
   modelDayRows: [],
   onDuplicateKeyUpdateTables: [],
 };
@@ -118,6 +132,7 @@ function resetMockState() {
   state.proxyRows = [];
   state.siteDayRows = [];
   state.siteHourRows = [];
+  state.accountHourRows = [];
   state.modelDayRows = [];
   state.onDuplicateKeyUpdateTables = [];
 }
@@ -127,6 +142,7 @@ function resolveTableName(table: unknown): string {
   if (table === proxyLogs) return 'proxy_logs';
   if (table === siteDayUsage) return 'site_day_usage';
   if (table === siteHourUsage) return 'site_hour_usage';
+  if (table === accountHourUsage) return 'account_hour_usage';
   if (table === modelDayUsage) return 'model_day_usage';
   return 'unknown';
 }
@@ -154,6 +170,11 @@ function applyInsert(
 
   if (table === siteHourUsage) {
     state.siteHourRows.push({ ...(values as Record<string, unknown>) });
+    return;
+  }
+
+  if (table === accountHourUsage) {
+    state.accountHourRows.push({ ...(values as Record<string, unknown>) });
     return;
   }
 
@@ -223,6 +244,9 @@ function makeSelectChain() {
       }
       if (fromTable === siteHourUsage) {
         return state.siteHourRows.map((row) => ({ ...row }));
+      }
+      if (fromTable === accountHourUsage) {
+        return state.accountHourRows.map((row) => ({ ...row }));
       }
       if (fromTable === modelDayUsage) {
         return state.modelDayRows.map((row) => ({ ...row }));
@@ -310,6 +334,7 @@ describe('usageAggregationService mysql conflict handling', () => {
       modelRequested: 'gpt-5',
       siteId: 7,
       sitePlatform: 'new-api',
+      accountId: 42,
     }];
 
     const result = await usageAggregationModule.runUsageAggregationProjectionPass();
@@ -323,6 +348,7 @@ describe('usageAggregationService mysql conflict handling', () => {
       'analytics_projection_checkpoints',
       'site_day_usage',
       'site_hour_usage',
+      'account_hour_usage',
       'model_day_usage',
       'analytics_projection_checkpoints',
     ]);
@@ -341,6 +367,15 @@ describe('usageAggregationService mysql conflict handling', () => {
         bucketStartUtc: '2026-04-08 02:00:00',
         siteId: 7,
         totalCalls: 1,
+      }),
+    ]);
+    expect(state.accountHourRows).toEqual([
+      expect.objectContaining({
+        bucketStartUtc: '2026-04-08 02:00:00',
+        accountId: 42,
+        totalCalls: 1,
+        successCalls: 1,
+        failedCalls: 0,
       }),
     ]);
     expect(state.modelDayRows).toEqual([

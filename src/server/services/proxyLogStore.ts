@@ -5,6 +5,7 @@ import {
   hasProxyLogClientColumns,
   hasProxyLogDownstreamApiKeyIdColumn,
   hasProxyLogStreamTimingColumns,
+  hasProxyLogUpstreamEndpointColumn,
 } from '../db/index.js';
 
 export type ProxyLogInsertInput = {
@@ -29,6 +30,7 @@ export type ProxyLogInsertInput = {
   clientAppName?: string | null;
   clientConfidence?: string | null;
   errorMessage?: string | null;
+  upstreamEndpoint?: string | null;
   retryCount?: number | null;
   createdAt?: string | null;
 };
@@ -52,6 +54,7 @@ function buildProxyLogCoreSelectFields() {
     errorMessage: schema.proxyLogs.errorMessage,
     retryCount: schema.proxyLogs.retryCount,
     createdAt: schema.proxyLogs.createdAt,
+    upstreamEndpoint: schema.proxyLogs.upstreamEndpoint,
   };
 }
 
@@ -256,6 +259,17 @@ export function isMissingProxyLogStreamTimingColumnsError(error: unknown): boole
     );
 }
 
+export function isMissingProxyLogUpstreamEndpointColumnError(error: unknown): boolean {
+  const lowered = normalizeProxyLogStoreErrorMessage(error);
+  return lowered.includes('upstream_endpoint')
+    && (
+      lowered.includes('does not exist')
+      || lowered.includes('unknown column')
+      || lowered.includes('no such column')
+      || lowered.includes('has no column named')
+    );
+}
+
 export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> {
   const baseValues = {
     routeId: input.routeId ?? null,
@@ -292,11 +306,14 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
   const requestedStreamTimingFields = input.isStream != null || input.firstByteLatencyMs != null;
   const includeStreamTimingFields = requestedStreamTimingFields
     && await hasProxyLogStreamTimingColumns();
+  const includeUpstreamEndpoint = input.upstreamEndpoint != null
+    && await hasProxyLogUpstreamEndpointColumn();
 
   let allowBillingDetails = includeBillingDetails;
   let allowDownstreamApiKeyId = includeDownstreamApiKeyId;
   let allowClientFields = includeClientFields;
   let allowStreamTimingFields = includeStreamTimingFields;
+  let allowUpstreamEndpoint = includeUpstreamEndpoint;
 
   while (true) {
     const values = {
@@ -317,6 +334,7 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
           clientConfidence: input.clientConfidence ?? null,
         }
         : {}),
+      ...(allowUpstreamEndpoint ? { upstreamEndpoint: input.upstreamEndpoint ?? null } : {}),
     };
 
     try {
@@ -340,6 +358,11 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
 
       if (allowStreamTimingFields && isMissingProxyLogStreamTimingColumnsError(error)) {
         allowStreamTimingFields = false;
+        continue;
+      }
+
+      if (allowUpstreamEndpoint && isMissingProxyLogUpstreamEndpointColumnError(error)) {
+        allowUpstreamEndpoint = false;
         continue;
       }
 

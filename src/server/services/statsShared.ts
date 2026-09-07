@@ -273,3 +273,135 @@ export function buildSiteAvailabilitySummariesFromHourlyAggregates(
 
   return finalizeSiteAvailabilitySummaries(sites, siteMap);
 }
+
+export type AccountAvailabilityHourAggregateRow = {
+  accountId: number | null;
+  hourStartUtc: StoredUtcDateTimeInput;
+  totalRequests: number | null;
+  successCount: number | null;
+  failedCount: number | null;
+  totalLatencyMs: number | null;
+  latencyCount: number | null;
+};
+
+type AccountAvailabilityAccumulator = {
+  accountId: number;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  latencyTotalMs: number;
+  latencyCount: number;
+  buckets: SiteAvailabilityBucketAccumulator[];
+};
+
+export type AccountAvailabilitySummary = {
+  accountId: number;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  availabilityPercent: number | null;
+  averageLatencyMs: number | null;
+  buckets: Array<{
+    startUtc: string;
+    label: string;
+    totalRequests: number;
+    successCount: number;
+    failedCount: number;
+    availabilityPercent: number | null;
+    averageLatencyMs: number | null;
+  }>;
+};
+
+export function buildAccountAvailabilitySummariesFromHourlyAggregates(
+  accountIds: number[],
+  rows: AccountAvailabilityHourAggregateRow[],
+  now = new Date(),
+): Map<number, AccountAvailabilitySummary> {
+  const endLocal = getLocalHourAnchor(now);
+  const startLocal = new Date(
+    endLocal.getTime() -
+      (SITE_AVAILABILITY_BUCKET_COUNT - 1) * SITE_AVAILABILITY_BUCKET_MS,
+  );
+  const startMs = startLocal.getTime();
+  const rangeMs = SITE_AVAILABILITY_BUCKET_COUNT * SITE_AVAILABILITY_BUCKET_MS;
+
+  const accountMap = new Map<number, AccountAvailabilityAccumulator>();
+  for (const accountId of accountIds) {
+    accountMap.set(accountId, {
+      accountId,
+      totalRequests: 0,
+      successCount: 0,
+      failedCount: 0,
+      latencyTotalMs: 0,
+      latencyCount: 0,
+      buckets: createSiteAvailabilityBucketTemplate(startMs),
+    });
+  }
+
+  for (const row of rows) {
+    if (row.accountId == null) continue;
+    const target = accountMap.get(row.accountId);
+    if (!target) continue;
+
+    const parsed = parseStoredUtcDateTime(row.hourStartUtc);
+    if (!parsed) continue;
+    const diffMs = parsed.getTime() - startMs;
+    if (diffMs < 0 || diffMs >= rangeMs) continue;
+
+    const bucketIndex = Math.floor(diffMs / SITE_AVAILABILITY_BUCKET_MS);
+    const bucket = target.buckets[bucketIndex];
+    const totalRequests = Math.max(0, Number(row.totalRequests || 0));
+    const successCount = Math.max(0, Number(row.successCount || 0));
+    const failedCount = Math.max(0, Number(row.failedCount || 0));
+    const totalLatencyMs = Math.max(0, Number(row.totalLatencyMs || 0));
+    const latencyCount = Math.max(0, Number(row.latencyCount || 0));
+
+    target.totalRequests += totalRequests;
+    target.successCount += successCount;
+    target.failedCount += failedCount;
+    target.latencyTotalMs += totalLatencyMs;
+    target.latencyCount += latencyCount;
+
+    bucket.totalRequests += totalRequests;
+    bucket.successCount += successCount;
+    bucket.failedCount += failedCount;
+    bucket.latencyTotalMs += totalLatencyMs;
+    bucket.latencyCount += latencyCount;
+  }
+
+  const result = new Map<number, AccountAvailabilitySummary>();
+  for (const accountId of accountIds) {
+    const agg = accountMap.get(accountId)!;
+    result.set(accountId, {
+      accountId,
+      totalRequests: agg.totalRequests,
+      successCount: agg.successCount,
+      failedCount: agg.failedCount,
+      availabilityPercent:
+        agg.totalRequests > 0
+          ? roundPercent((agg.successCount / agg.totalRequests) * 100)
+          : null,
+      averageLatencyMs:
+        agg.latencyCount > 0
+          ? Math.round(agg.latencyTotalMs / agg.latencyCount)
+          : null,
+      buckets: agg.buckets.map((bucket) => ({
+        startUtc: bucket.startUtc,
+        label: bucket.label,
+        totalRequests: bucket.totalRequests,
+        successCount: bucket.successCount,
+        failedCount: bucket.failedCount,
+        availabilityPercent:
+          bucket.totalRequests > 0
+            ? roundPercent((bucket.successCount / bucket.totalRequests) * 100)
+            : null,
+        averageLatencyMs:
+          bucket.latencyCount > 0
+            ? Math.round(bucket.latencyTotalMs / bucket.latencyCount)
+            : null,
+      })),
+    });
+  }
+
+  return result;
+}

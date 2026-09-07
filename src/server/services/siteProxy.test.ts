@@ -289,6 +289,36 @@ describe('siteProxy', () => {
     expect(headers.get('x-request-id')).toBe('req-1');
   });
 
+  it('applies account custom headers after site headers', async () => {
+    const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+    const accountExtraConfig = JSON.stringify({
+      customHeaders: { 'x-scope': 'account-level', 'x-account-only': 'yes' },
+    });
+    const site = {
+      proxyUrl: null,
+      useSystemProxy: false,
+      customHeaders: { 'x-scope': 'site-level' },
+    };
+
+    const withoutOverride = new Headers(withSiteRecordProxyRequestInit(site, {
+      method: 'POST',
+      headers: { 'x-scope': 'request-level' },
+    }, null, accountExtraConfig).headers);
+
+    expect(withoutOverride.get('x-scope')).toBe('request-level');
+    expect(withoutOverride.get('x-account-only')).toBe('yes');
+
+    const withOverride = new Headers(withSiteRecordProxyRequestInit(site, {
+      method: 'POST',
+      headers: { 'x-scope': 'request-level' },
+    }, null, JSON.stringify({
+      customHeaders: { 'x-scope': 'account-level' },
+      customHeadersOverrideRequestHeaders: true,
+    })).headers);
+
+    expect(withOverride.get('x-scope')).toBe('account-level');
+  });
+
   it('resolveChannelProxyUrl prefers account proxy over site proxy', async () => {
     const { resolveChannelProxyUrl } = await import('./siteProxy.js');
 
