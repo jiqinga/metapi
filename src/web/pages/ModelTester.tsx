@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, setProxyTestTimeoutMs } from '../api.js';
-import { clearAuthSession, getAuthToken } from '../authSession.js';
 import {
   DEBUG_TABS,
   DEFAULT_INPUTS,
@@ -1646,12 +1645,6 @@ export default function ModelTester() {
 
     try {
       const response = await api.proxyTestStream(payload, controller.signal);
-      if (response.status === 401 || response.status === 403) {
-        const hadToken = Boolean(getAuthToken(localStorage));
-        clearAuthSession(localStorage);
-        if (hadToken) window.location.reload();
-        throw new Error('会话已过期');
-      }
       if (!response.ok) {
         throw new Error(await parseStreamErrorText(response));
       }

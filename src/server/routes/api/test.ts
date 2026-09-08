@@ -126,6 +126,13 @@ class UpstreamProxyError extends Error {
   }
 }
 
+// 401/403 are reserved by the management auth middleware; the web client
+// (fetchAuthenticatedResponse) wipes its session on them, so upstream auth
+// failures must not be mirrored with those codes.
+function normalizeTestErrorStatus(status: number): number {
+  return status === 401 || status === 403 ? 502 : status;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -642,7 +649,7 @@ async function sendBufferedEnvelope(
     return reply.send(data);
   } catch (error) {
     if (error instanceof UpstreamProxyError) {
-      return reply.code(error.statusCode).send(error.responsePayload);
+      return reply.code(normalizeTestErrorStatus(error.statusCode)).send(error.responsePayload);
     }
     return reply.code(502).send({
       error: {
@@ -701,7 +708,7 @@ async function sendStreamingEnvelope(
   if (!upstream.ok) {
     const text = await readRuntimeResponseText(upstream);
     cleanupClientListeners();
-    return reply.code(upstream.status).send(normalizeErrorPayload(text));
+    return reply.code(normalizeTestErrorStatus(upstream.status)).send(normalizeErrorPayload(text));
   }
 
   const contentType = upstream.headers.get('content-type') || '';

@@ -364,4 +364,63 @@ describe('testRoutes proxy tester transport', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
+
+  it('remaps buffered upstream auth failures to 502 so the web session stays intact', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: { message: 'invalid api token', type: 'auth_error' },
+    }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/proxy',
+      payload: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        requestKind: 'json',
+        stream: false,
+        jobMode: false,
+        rawMode: false,
+        jsonBody: { model: 'gpt-4o-mini' },
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({
+      error: { message: 'invalid api token', type: 'auth_error' },
+    });
+  });
+
+  it('remaps streamed upstream auth failures to 502 so the web session stays intact', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: { message: 'ip not allowed', type: 'auth_error' },
+    }), {
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/proxy/stream',
+      payload: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: false,
+        jsonBody: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'ping' }],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({
+      error: { message: 'ip not allowed', type: 'auth_error' },
+    });
+  });
 });
