@@ -1,4 +1,5 @@
 import { db, schema } from '../db/index.js';
+import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { and, eq, inArray } from 'drizzle-orm';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
 
@@ -719,8 +720,8 @@ async function importOneSite(
     const inserted = await db.insert(schema.sites).values({
       ...siteFields,
       status: asString(siteData.status) === 'disabled' ? 'disabled' : 'active',
-    }).returning().get();
-    targetSiteId = getInsertedId(inserted);
+    }).run();
+    targetSiteId = requireInsertedRowId(inserted, '数据库插入失败：未返回新记录 ID');
   }
 
   // Replace API endpoints for this site
@@ -825,8 +826,8 @@ async function importConnections(
         oauthAccountKey: asNullableString(accountData.oauthAccountKey),
         oauthProjectId: asNullableString(accountData.oauthProjectId),
         extraConfig: asNullableString(accountData.extraConfig),
-      }).returning().get();
-      targetAccountId = getInsertedId(insertedAccount);
+      }).run();
+      targetAccountId = requireInsertedRowId(insertedAccount, '数据库插入失败：未返回新记录 ID');
     }
 
     // Import tokens for this account
@@ -865,11 +866,6 @@ async function importConnections(
       }
     }
   }
-}
-
-function getInsertedId(row: { id: number | bigint } | undefined): number {
-  if (!row) throw new Error('数据库插入失败：未返回新记录 ID');
-  return typeof row.id === 'bigint' ? Number(row.id) : row.id;
 }
 
 function asString(value: unknown): string {

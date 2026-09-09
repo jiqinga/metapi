@@ -17,9 +17,30 @@ type DashboardCompatApiMock = {
   getSiteTrend?: MockLike;
   getSites?: MockLike;
   getSiteSnapshot?: MockLike;
+  getUsageOverview?: MockLike;
 };
 
 const FIXTURE_GENERATED_AT = '2026-04-09T00:00:00.000Z';
+
+const EMPTY_USAGE_OVERVIEW = {
+  trend: [] as Array<{
+    day: string;
+    tokens: number;
+    spend: number;
+    calls: number;
+    successCalls: number;
+    promptTokens: number;
+    completionTokens: number;
+  }>,
+  totals: {
+    tokens: 0,
+    spend: 0,
+    calls: 0,
+    successCalls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+  },
+};
 
 function buildDerivedSites(accounts: any[]): any[] {
   const siteMap = new Map<number, any>();
@@ -95,6 +116,10 @@ export function installAccountsSnapshotCompat(apiMock: AccountsCompatApiMock) {
 }
 
 export function installDashboardSnapshotCompat(apiMock: DashboardCompatApiMock) {
+  if (typeof apiMock.getUsageOverview !== 'function') {
+    apiMock.getUsageOverview = async () => EMPTY_USAGE_OVERVIEW;
+  }
+
   apiMock.getDashboardSnapshot?.mockImplementation?.(async () => {
     if (typeof apiMock.getDashboard !== 'function') return null;
     return apiMock.getDashboard();
