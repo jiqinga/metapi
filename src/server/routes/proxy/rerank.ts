@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { ensureModelAllowedForDownstreamKey } from './downstreamPolicy.js';
+import { ensureModelAllowedForDownstreamKey } from '../../proxy-core/downstreamPolicyRequest.js';
 
 /** Rerank 路由只负责输入校验和权限适配，实际代理编排由 proxy-core surface 负责。 */
 export async function rerankProxyRoute(app: FastifyInstance) {

@@ -1243,7 +1243,6 @@ export async function refreshModelsForAccount(
 
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
-  const modelContextScope = buildAccountModelContextLengthScope(account.id);
   const modelContextRefreshScope = `${modelContextScope}:refresh:${randomUUID()}`;
   const discoveredContextLengths = new Map<string, number>();
   let modelContextScanCounter = 0;
