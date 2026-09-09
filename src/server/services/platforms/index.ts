@@ -15,6 +15,7 @@ import { AntigravityAdapter } from './antigravity.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
 import { detectPlatformByTitle } from './titleHint.js';
 import { detectPlatformByUrlHint, normalizePlatformAlias } from '../../../shared/platformIdentity.js';
+import { withAccountProxyOverride } from '../siteProxy.js';
 
 const adapters: PlatformAdapter[] = [
   // Specific forks before generic adapters for better auto-detection.
@@ -51,24 +52,36 @@ const titleFirstPlatforms = new Set<string>([
   'sub2api',
 ]);
 
-export async function detectPlatform(url: string): Promise<PlatformAdapter | undefined> {
+export async function detectPlatform(
+  url: string,
+  options?: { proxyUrl?: string | null },
+): Promise<PlatformAdapter | undefined> {
   const urlHint = detectPlatformByUrlHint(url);
   if (urlHint) {
     return getAdapter(urlHint);
   }
 
-  const titleHint = await detectPlatformByTitle(url);
-  if (titleHint && titleFirstPlatforms.has(titleHint)) {
-    return getAdapter(titleHint);
-  }
+  // Force every probe (title fetch and adapter.detect) through the caller's
+  // proxy. The site may not exist in the DB yet, so URL-based resolution in
+  // withSiteProxyRequestInit would otherwise silently fall back to direct.
+  const runProbes = async (): Promise<PlatformAdapter | undefined> => {
+    const titleHint = await detectPlatformByTitle(url);
+    if (titleHint && titleFirstPlatforms.has(titleHint)) {
+      return getAdapter(titleHint);
+    }
 
-  for (const adapter of adapters) {
-    if (await adapter.detect(url)) return adapter;
-  }
+    for (const adapter of adapters) {
+      if (await adapter.detect(url)) return adapter;
+    }
 
-  if (titleHint) {
-    return getAdapter(titleHint);
-  }
+    if (titleHint) {
+      return getAdapter(titleHint);
+    }
 
-  return undefined;
+    return undefined;
+  };
+
+  return options?.proxyUrl
+    ? withAccountProxyOverride(options.proxyUrl, runProbes)
+    : runProbes();
 }

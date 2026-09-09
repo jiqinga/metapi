@@ -915,10 +915,14 @@ export const api = {
   deleteSite: (id: number) => request(`/api/sites/${id}`, { method: "DELETE" }),
   batchUpdateSites: (data: any) =>
     request("/api/sites/batch", { method: "POST", body: JSON.stringify(data) }),
-  detectSite: (url: string) =>
+  detectSite: (url: string, proxyUrl?: string, useSystemProxy?: boolean) =>
     request("/api/sites/detect", {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        proxyUrl: proxyUrl?.trim() || null,
+        useSystemProxy: !!useSystemProxy,
+      }),
     }),
   getSiteDisabledModels: (siteId: number) =>
     request(`/api/sites/${siteId}/disabled-models`),

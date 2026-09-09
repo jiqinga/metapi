@@ -996,9 +996,11 @@ export default function Sites() {
       return;
     }
     const requestedPrimarySiteUrl = analyzePrimarySiteUrl(requestedUrl);
+    const requestedProxyUrl = form.proxyUrl.trim();
+    const requestedUseSystemProxy = !!form.useSystemProxy;
     setDetecting(true);
     try {
-      const result = await api.detectSite(requestedUrl);
+      const result = await api.detectSite(requestedUrl, requestedProxyUrl, requestedUseSystemProxy);
       if (
         latestPrimarySiteUrlRef.current.trim() !== requestedUrl
         || latestPlatformRef.current.trim() !== requestedPlatform

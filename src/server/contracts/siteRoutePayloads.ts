@@ -54,6 +54,8 @@ const siteModelProtocolOverridesPayloadSchema = z.object({
 
 const siteDetectPayloadSchema = z.object({
   url: requiredTrimmedString,
+  proxyUrl: unknownField,
+  useSystemProxy: unknownField,
 }).passthrough();
 
 const siteImportPayloadSchema = z.object({

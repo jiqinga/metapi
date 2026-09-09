@@ -129,7 +129,7 @@ describe('Sites detect race handling', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.detectSite).toHaveBeenCalledWith('https://stale.example.com/v1');
+      expect(apiMock.detectSite).toHaveBeenCalledWith('https://stale.example.com/v1', '', false);
 
       const latestUrlInput = findPrimarySiteUrlInput(root);
       await act(async () => {
@@ -201,7 +201,7 @@ describe('Sites detect race handling', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.detectSite).toHaveBeenCalledWith('https://blur.example.com/v1');
+      expect(apiMock.detectSite).toHaveBeenCalledWith('https://blur.example.com/v1', '', false);
 
       const platformSelect = findPlatformSelect(root);
       await act(async () => {

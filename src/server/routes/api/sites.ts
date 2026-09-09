@@ -628,7 +628,10 @@ export async function sitesRoutes(app: FastifyInstance) {
       if (explicitInitializationPreset) {
         detectedPlatform = explicitInitializationPreset.platform;
       } else {
-        const detected = await detectSite(detectionUrl);
+        const detected = await detectSite(detectionUrl, {
+          proxyUrl: normalizedProxyUrl.proxyUrl,
+          useSystemProxy: normalizedUseSystemProxy,
+        });
         detectedPlatform = detected?.platform ?? null;
         responseInitializationPresetId = detected?.initializationPresetId || null;
       }
@@ -1148,7 +1151,10 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsedBody.error });
     }
 
-    const result = await detectSite(parsedBody.data.url);
+    const result = await detectSite(parsedBody.data.url, {
+      proxyUrl: parsedBody.data.proxyUrl,
+      useSystemProxy: parsedBody.data.useSystemProxy,
+    });
     if (!result) {
       return { url: parsedBody.data.url, platform: 'openai' };
     }
