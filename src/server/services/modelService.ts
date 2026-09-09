@@ -1371,25 +1371,7 @@ export async function refreshModelsForAccount(
       setModelContextLengths(new Map(), modelContextScope);
     }
     const firstMessage = failureMessages[0] || '';
-    if (!firstMessage) {
-      // Every credential probe succeeded but upstream returned no models — the
-      // request is healthy, only the model set is empty.
-      await setAccountRuntimeHealth(account.id, {
-        state: 'degraded',
-        reason: '模型探测成功，但上游未返回可用模型',
-        source: 'model-discovery',
-        checkedAt: new Date().toISOString(),
-      });
-      return buildSuccessfulRefreshResult({
-        accountId,
-        modelCount: 0,
-        modelsPreview: [],
-        tokenScanned: scannedTokenCount,
-        discoveredByCredential,
-        discoveredApiToken: !!discoveredApiToken,
-      });
-    }
-    const errorCode = classifyModelDiscoveryError(firstMessage);
+    const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
     const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);
     await setAccountRuntimeHealth(account.id, {
       state: 'unhealthy',
