@@ -11,38 +11,23 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="https://linux.do/t/topic/1671489" alt="LINUX DO">
-    <img src="https://shorturl.at/ggSqS" alt="LINUX DO">
-  </a>
-</p>
-
-<p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
+<a href="https://github.com/jiqinga/metapi/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/jiqinga/metapi?label=Release&logo=github&style=flat">
 </a><!--
---><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
+--><a href="https://github.com/jiqinga/metapi/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/jiqinga/metapi?style=flat&logo=github&label=Stars">
 </a><!--
---><a href="https://deepwiki.com/cita-777/metapi">
-  <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
+--><a href="https://hub.docker.com/r/jiqinga/metapi">
+  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/jiqinga/metapi?style=flat&logo=docker&label=Docker%20Pulls">
 </a><!--
---><a href="https://hub.docker.com/r/1467078763/metapi">
-  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/1467078763/metapi?style=flat&logo=docker&label=Docker%20Pulls">
-</a><!--
---><a href="https://hub.docker.com/r/1467078763/metapi">
-  <img alt="Docker Image" src="https://img.shields.io/badge/docker-1467078763%2Fmetapi-blue?logo=docker&style=flat">
+--><a href="https://github.com/jiqinga/metapi">
+  <img alt="Docker Image" src="https://img.shields.io/badge/docker-jiqinga%2Fmetapi-blue?logo=docker&style=flat">
 </a><!--
 --><a href="LICENSE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><!--
 --><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><!--
---><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><!--
---><a href="https://zeabur.com/templates/DOX5PR">
-  <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
-</a><!--
---><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
-  <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
-</a>
+--><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat">
 </p>
 
 <p align="center">
@@ -51,31 +36,16 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>Docs</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">Quick Start</a> ·
-  <a href="https://metapi.cita777.me/deployment">Deployment</a> ·
-  <a href="https://metapi.cita777.me/configuration">Configuration</a> ·
-  <a href="https://metapi.cita777.me/client-integration">Client Integration</a> ·
-  <a href="https://metapi.cita777.me/faq">FAQ</a> ·
+  <a href="./docs/index.md"><strong>Docs</strong></a> ·
+  <a href="./docs/getting-started.md">Quick Start</a> ·
+  <a href="./docs/deployment.md">Deployment</a> ·
+  <a href="./docs/configuration.md">Configuration</a> ·
+  <a href="./docs/client-integration.md">Client Integration</a> ·
+  <a href="./docs/faq.md">FAQ</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 </div>
-
----
-
-## 🌐 Live Demo
-
-> Try Metapi without deploying — full-featured demo instance:
-
-| | |
-|---|---|
-| 🔗 **Demo URL** | [metapi-t9od.onrender.com](https://metapi-t9od.onrender.com/) |
-| 🔑 **Admin Token** | `123456` |
-
-> **⚠️ Security Notice**: This is a public demo. **Do NOT enter any real API keys, credentials, or site information.** Data may be reset at any time.
-
-> **ℹ️ Note**: Demo runs on Render free tier + OpenRouter free models (only `:free` suffixed models available). First visit may take 30-60s to wake up.
 
 ---
 
@@ -93,6 +63,8 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 - [AnyRouter](https://anyrouter.top) — Universal routing platform
 - [Sub2API](https://github.com/Wei-Shaw/sub2api) — Subscription-based relay
 - [OrcaRouter](https://www.orcarouter.ai) — OpenAI-compatible gateway with built-in agent security
+
+> **ℹ️ About this fork**: This repository (`jiqinga/metapi`) has significantly diverged from the original upstream with enhancements such as usage analytics, proxy debug tracing, two-level model disabling, and per-site concurrency control — see [Features](#features) and [Enhancements over the Original](#enhancements-over-the-original).
 
 | Pain Point | How Metapi Solves It |
 | --- | --- |
@@ -192,14 +164,16 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 ### Unified Proxy Gateway
 
 - Compatible with **OpenAI** and **Claude** downstream formats, works with all mainstream clients
-- Supports Responses / Chat Completions / Messages / Completions (Legacy) / Embeddings / Images / Models, plus standard `/v1/files`
+- Supports Responses / Chat Completions / Messages / Completions (Legacy) / Embeddings / Images / Models / Rerank, plus standard `/v1/files`
 - Full SSE streaming support with automatic format conversion (OpenAI <-> Claude)
+- Gemini native API bridging: tool-call history requests automatically route through the native Gemini API with thought signature handling
 
 ### Smart Routing Engine
 
 - Auto-discovers all available models from upstream sites — **zero-config** route table generation
 - Four-tier cost signal: **measured cost -> account-configured cost -> catalog reference price -> default fallback**
 - Multi-channel probabilistic distribution weighted by cost (40%), balance (30%), and usage (30%)
+- Per-site concurrency control: cap concurrent requests per site with slot queuing
 - Failed channels auto-cool down (default 10-minute cooldown)
 - Auto-retry on failure with automatic channel switching
 - Routing decisions are visually explainable — every choice is transparent and auditable
@@ -227,10 +201,12 @@ Adapters cover shared capabilities such as model discovery and proxy integration
 ### Account & Token Management
 
 - **Multi-site, multi-account**: Each site supports multiple accounts, each account can hold multiple API tokens
-- **Health tracking**: `healthy` / `unhealthy` / `degraded` / `disabled` four-state machine
+- **Two-level model disabling**: account-level (connection-level) and site-level model disabling are configured independently and take effect as a union
+- **Health tracking**: `healthy` / `unhealthy` / `degraded` / `disabled` four-state machine, with per-account availability and per-model call/latency breakdowns
 - **Encrypted credential storage**: All sensitive credentials are encrypted in the local database
 - **Auto-renewal**: Tokens are automatically re-authenticated when expired
 - **Cascading control**: Disabling a site automatically disables all associated accounts
+- **Model context length**: automatically discovered from upstream and exposed per model, with manual model deletion support
 
 ### Model Marketplace
 
@@ -273,11 +249,13 @@ Five notification channels supported:
 
 Alert scenarios: low balance warning, site/account anomalies, check-in failures, proxy request failures, token expiry reminders, daily summary reports. Alert cooldown mechanism (default: 300 seconds) prevents duplicate notifications.
 
-### Data Dashboard
+### Data Dashboard & Usage Analytics
 
 - Site balance pie chart, daily spending trend graphs
-- Global search (sites, accounts, models)
-- System event logs, proxy request logs (model, status, latency, token usage, cost estimation)
+- **GitHub-style contribution heatmap**: one-year panorama of daily proxy requests
+- **Standalone usage analytics page**: breakdowns across seven dimensions (overview / site / model / downstream key / client / account / token composition)
+- Global search (sites, accounts, models), with fuzzy search + server-side pagination on list pages
+- System event logs, proxy request logs (model, status, latency, token usage, cost estimation, actual upstream endpoint)
 
 <div align="center">
   <img src="docs/screenshots/dashboard.png" alt="dashboard-detail" width="700"/>
@@ -287,8 +265,10 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 ### Model Playground
 
 - Interactive chat testing to instantly verify model availability and response quality
-- Select any routed model to compare outputs across different channels
-- Streaming / non-streaming dual mode testing
+- Select any routed model to compare outputs across different channels; model dropdown filters by site
+- Streaming / non-streaming dual mode testing with configurable request timeout
+- **Protocol badges**: shows the actual upstream protocol (chat / messages / responses) each model uses, based on real proxy logs
+- **Debug tracing**: side-by-side request/response inspection with JSON syntax highlighting and merged SSE output
 
 <div align="center">
   <img src="docs/screenshots/playground.png" alt="playground-detail" width="700"/>
@@ -299,7 +279,26 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 
 - **Single Docker container** with a default local data directory, plus optional external MySQL / PostgreSQL runtime DB
 - Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments
-- Full data import/export for worry-free migration
+- Site config export/import (non-destructive merge by platform + URL), full data import/export for worry-free migration
+
+---
+
+## Enhancements over the Original
+
+This fork continuously evolves on top of the original Metapi. In addition to upstream improvements, it adds:
+
+- **Usage analytics**: standalone `/usage-analytics` page with seven-dimension usage breakdowns (overview/site/model/key/client/account/token composition)
+- **Contribution heatmap**: GitHub-style daily request heatmap on the dashboard
+- **Proxy debug tracing**: per-call request/response inspection, JSON highlighting, and merged SSE output in the playground
+- **Model protocol badges**: detects the actual upstream protocol per model from real proxy logs, with a configurable lookback window
+- **Two-level model disabling**: account-level + site-level disabling take effect as a union; site-disabled models are also filtered from route-candidate stats
+- **Per-site concurrency control**: cap maximum concurrent requests per site
+- **Rerank proxy**: `/v1/rerank` endpoint support
+- **Gemini native bridging**: tool-call history automatically bridges to the native Gemini API with correct thought signature round-tripping
+- **Structured proxy logs**: proxy logs gained an actual-upstream-endpoint column for more accurate balance fallback estimation
+- **Check-in reliability**: detects the Aliyun ESA browser challenge with clear diagnostics instead of cryptic parse errors
+- **Settings split**: `/settings` reorganized into per-domain sub-pages, surfacing task switches and probe windows
+- **Site/account search**: fuzzy search + server-side pagination on list pages
 
 ---
 
@@ -313,16 +312,16 @@ mkdir metapi && cd metapi
 cat > docker-compose.yml << 'EOF'
 services:
   metapi:
-    image: 1467078763/metapi:latest
+    image: jiqinga/metapi:latest
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     volumes:
       - ./data:/app/data
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
-      CHECKIN_CRON: "0 8 * * *"
-      BALANCE_REFRESH_CRON: "0 * * * *"
+      CHECKIN_CRON: "${CHECKIN_CRON:-0 8 * * *}"
+      BALANCE_REFRESH_CRON: "${BALANCE_REFRESH_CRON:-0 * * * *}"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
@@ -348,7 +347,7 @@ docker run -d --name metapi \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  1467078763/metapi:latest
+  jiqinga/metapi:latest
 ```
 
 </details>
@@ -555,9 +554,9 @@ Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in 
 
 All forms of contribution are welcome!
 
-- Report bugs — [Submit an Issue](https://github.com/cita-777/metapi/issues)
-- Feature suggestions — [Start a Discussion](https://github.com/cita-777/metapi/issues)
-- Code contributions — [Submit a Pull Request](https://github.com/cita-777/metapi/pulls)
+- Report bugs — [Submit an Issue](https://github.com/jiqinga/metapi/issues)
+- Feature suggestions — [Start a Discussion](https://github.com/jiqinga/metapi/issues)
+- Code contributions — [Submit a Pull Request](https://github.com/jiqinga/metapi/pulls)
 - Contributing guide — [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -575,31 +574,14 @@ If you discover a security issue, please refer to [SECURITY.md](SECURITY.md) and
 
 ---
 
-## Thanks
-
-Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi. A lot of the product polish in this project came directly from community usage and iteration.
-
-Special thanks to all contributors:
-
-<!-- metapi-contributors:start -->
-<p align="left">
-  <a href="https://github.com/cita-777"><img src="https://avatars.githubusercontent.com/u/177306803?v=4&s=48" width="48" height="48" alt="cita-777" title="cita-777"/></a> <a href="https://github.com/Hureru"><img src="https://avatars.githubusercontent.com/u/121702350?v=4&s=48" width="48" height="48" alt="Hureru" title="Hureru"/></a> <a href="https://github.com/bnvnvnv"><img src="https://avatars.githubusercontent.com/u/4243616?v=4&s=48" width="48" height="48" alt="bnvnvnv" title="bnvnvnv"/></a> <a href="https://github.com/ksmaze"><img src="https://avatars.githubusercontent.com/u/480916?v=4&s=48" width="48" height="48" alt="ksmaze" title="ksmaze"/></a> <a href="https://github.com/DeliciousBuding"><img src="https://avatars.githubusercontent.com/u/101502465?v=4&s=48" width="48" height="48" alt="DeliciousBuding" title="DeliciousBuding"/></a> <a href="https://github.com/Shinku-Chen"><img src="https://avatars.githubusercontent.com/u/17696928?v=4&s=48" width="48" height="48" alt="Shinku-Chen" title="Shinku-Chen"/></a> <a href="https://github.com/weijiafu14"><img src="https://avatars.githubusercontent.com/u/17469139?v=4&s=48" width="48" height="48" alt="weijiafu14" title="weijiafu14"/></a> <a href="https://github.com/ShicYang"><img src="https://avatars.githubusercontent.com/u/61652316?v=4&s=48" width="48" height="48" alt="ShicYang" title="ShicYang"/></a> <a href="https://github.com/Babylonehy"><img src="https://avatars.githubusercontent.com/u/30937892?v=4&s=48" width="48" height="48" alt="Babylonehy" title="Babylonehy"/></a> <a href="https://github.com/zmoon460"><img src="https://avatars.githubusercontent.com/u/42328751?v=4&s=48" width="48" height="48" alt="zmoon460" title="zmoon460"/></a>
-  <a href="https://github.com/Brucents"><img src="https://avatars.githubusercontent.com/u/81791987?v=4&s=48" width="48" height="48" alt="Brucents" title="Brucents"/></a> <a href="https://github.com/ImgBotApp"><img src="https://avatars.githubusercontent.com/u/31427850?v=4&s=48" width="48" height="48" alt="ImgBotApp" title="ImgBotApp"/></a> <a href="https://github.com/Zhou-Ruichen"><img src="https://avatars.githubusercontent.com/u/191002401?v=4&s=48" width="48" height="48" alt="Zhou-Ruichen" title="Zhou-Ruichen"/></a> <a href="https://github.com/nodca"><img src="https://avatars.githubusercontent.com/u/96775880?v=4&s=48" width="48" height="48" alt="nodca" title="nodca"/></a> <a href="https://github.com/puyujian"><img src="https://avatars.githubusercontent.com/u/46592377?v=4&s=48" width="48" height="48" alt="puyujian" title="puyujian"/></a> <a href="https://github.com/rcocco"><img src="https://avatars.githubusercontent.com/u/46603462?v=4&s=48" width="48" height="48" alt="rcocco" title="rcocco"/></a> <a href="https://github.com/xuyufengfei"><img src="https://avatars.githubusercontent.com/u/188047874?v=4&s=48" width="48" height="48" alt="xuyufengfei" title="xuyufengfei"/></a>
-</p>
-<!-- metapi-contributors:end -->
-
----
-
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=jiqinga/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#jiqinga/metapi&type=date&legend=top-left)
 
 ---
 
 <div align="center">
 
 **If Metapi helps you, a Star is the best support!**
-
-<sub>Built with love by the AI community</sub>
 
 </div>

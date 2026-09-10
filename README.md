@@ -12,23 +12,15 @@
 
 
 <p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
-</a><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
-</a><a href="https://atomgit.com/cita-777/metapi">
-  <img alt="AtomGit Stars" src="https://atomgit.com/cita-777/metapi/star/badge.svg">
-</a><a href="https://deepwiki.com/cita-777/metapi">
-  <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
-</a><a href="https://hub.docker.com/r/1467078763/metapi">
-  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/1467078763/metapi?style=flat&logo=docker&label=Docker%20Pulls">
-</a><a href="https://hub.docker.com/r/1467078763/metapi">
+<a href="https://github.com/jiqinga/metapi/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/jiqinga/metapi?label=Release&logo=github&style=flat">
+</a><a href="https://github.com/jiqinga/metapi/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/jiqinga/metapi?style=flat&logo=github&label=Stars">
+</a><a href="https://hub.docker.com/r/jiqinga/metapi">
+  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/jiqinga/metapi?style=flat&logo=docker&label=Docker%20Pulls">
+</a><a href="https://github.com/jiqinga/metapi">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
-</a><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><a href="https://zeabur.com/templates/DOX5PR">
-  <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
-</a><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
-  <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
-</a>
+</a><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat">
 </p>
 
 <p align="center">
@@ -37,30 +29,15 @@
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>📚 在线文档</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">快速上手</a> ·
-  <a href="https://metapi.cita777.me/deployment">部署指南</a> ·
-  <a href="https://metapi.cita777.me/configuration">配置说明</a> ·
-  <a href="https://metapi.cita777.me/client-integration">客户端接入</a> ·
-  <a href="https://metapi.cita777.me/faq">常见问题</a>
+  <a href="./docs/index.md"><strong>📚 文档</strong></a> ·
+  <a href="./docs/getting-started.md">快速上手</a> ·
+  <a href="./docs/deployment.md">部署指南</a> ·
+  <a href="./docs/configuration.md">配置说明</a> ·
+  <a href="./docs/client-integration.md">客户端接入</a> ·
+  <a href="./docs/faq.md">常见问题</a>
 </p>
 
 </div>
-
----
-
-## 🌐 在线体验
-
-> 无需部署，直接体验 Metapi 的完整功能：
-
-|                        |                                                            |
-| ---------------------- | ---------------------------------------------------------- |
-| 🔗**体验地址**   | [metapi-t9od.onrender.com](https://metapi-t9od.onrender.com/) |
-| 🔑**管理员令牌** | `123456`                                                 |
-
-> **⚠️ 安全提示**：体验站为公共环境，**请勿填入你的 API Key、账号密码或站点信息**。数据随时可能被清空。
-
-> **ℹ️ 说明**：体验站使用 Render 免费方案 + OpenRouter 免费模型（仅 `:free` 后缀的模型可用）。
 
 ---
 
@@ -76,6 +53,8 @@
 - OAuth 连接：Codex、Claude、Gemini CLI、Antigravity
 
 详细接法见 [上游接入](./docs/upstream-integration.md) 与 [OAuth 管理](./docs/oauth.md)。
+
+> **ℹ️ 本分支说明**：本仓库（`jiqinga/metapi`）在原版基础上做了大量增强与裁剪，包括用量分析、代理调试追踪、双层模型禁用、站点级并发控制等，详见下方[核心功能](#-核心功能)与[相对原版的增强](#-相对原版的增强)。
 
 | 痛点                                  | Metapi 怎么解决                                                        |
 | ------------------------------------- | ---------------------------------------------------------------------- |
@@ -168,14 +147,16 @@
 ### 🌐 统一代理网关
 
 - 兼容 **OpenAI** 与 **Claude** 下游格式，对接所有主流客户端
-- 支持 Responses / Chat Completions / Messages / Completions（Legacy）/ Embeddings / Images / Models，以及标准 `/v1/files` 文件接口
+- 支持 Responses / Chat Completions / Messages / Completions（Legacy）/ Embeddings / Images / Models / Rerank，以及标准 `/v1/files` 文件接口
 - 完整的 SSE 流式传输支持，自动格式转换（OpenAI ⇄ Claude）
+- Gemini 原生接口桥接：带工具调用历史的请求自动走 Gemini 原生 API 并处理 thought signature
 
 ### 🧠 智能路由引擎
 
 - 自动发现所有上游站点的可用模型，**零配置**生成路由表
 - 四级成本信号：**实测成本 → 账号配置成本 → 目录参考价 → 默认兜底**
 - 多通道概率分摊，基于成本（40%）、余额（30%）、使用率（30%）加权分配
+- 站点级并发控制：为单个站点配置最大并发数，超限请求排队等待可用槽位
 - 失败通道自动冷却与避让（默认 10 分钟冷却期）
 - 请求失败自动重试，自动切换其他可用通道
 - 路由决策可视化解释，每次选择透明可审计
@@ -203,10 +184,12 @@
 ### 👥 账号与 Token 管理
 
 - **多站点多账号**：每个站点可添加多个账号，每个账号可持有多个 API Token
-- **健康状态追踪**：`healthy` / `unhealthy` / `degraded` / `disabled` 四级状态机
+- **双层模型禁用**：账号级（连接级）与站点级模型禁用独立配置、并集生效，精准控制每个连接可用的模型
+- **健康状态追踪**：`healthy` / `unhealthy` / `degraded` / `disabled` 四级状态机，支持按账号查看可用性与模型级调用/延迟明细
 - **凭证加密存储**：所有敏感凭证均加密保存在本地数据库中
 - **自动续签**：Token 过期时自动重新登录获取新凭证
 - **站点联动**：禁用站点自动级联禁用所有关联账号
+- **模型上下文长度**：自动从上游发现并透出各模型 `context_length`，支持手动删除误报模型
 
 ### 🏪 模型广场
 
@@ -249,11 +232,13 @@
 
 告警场景：余额不足预警、站点/账号异常、签到失败、代理请求失败、Token 过期提醒、每日摘要报告。告警冷却机制（默认 300 秒）防止重复通知。
 
-### 📊 数据看板
+### 📊 数据看板与用量分析
 
 - 站点余额饼图、每日消费趋势图
-- 全局搜索（站点、账号、模型）
-- 系统事件日志、代理请求日志（模型、状态、延迟、Token 用量、成本估算）
+- **GitHub 风格贡献热力图**：每日代理请求量一年全景
+- **独立用量分析页**：总览 / 站点 / 模型 / 下游 Key / 客户端 / 账号 / Token 构成 七个维度的用量拆解
+- 全局搜索（站点、账号、模型），站点与账号列表支持模糊搜索 + 服务端分页
+- 系统事件日志、代理请求日志（模型、状态、延迟、Token 用量、成本估算、实际上游端点）
 
 <div align="center">
   <img src="docs/screenshots/dashboard.png" alt="dashboard-detail" width="700"/>
@@ -263,8 +248,10 @@
 ### 🎮 模型操练场
 
 - 交互式聊天测试，即时验证模型可用性与响应质量
-- 选择任意路由模型，对比不同通道输出
-- 流式 / 非流式双模式测试
+- 选择任意路由模型，对比不同通道输出；模型下拉按站点过滤
+- 流式 / 非流式双模式测试，请求超时可配置
+- **协议徽章**：基于真实代理日志展示每个模型实际使用的上游协议（chat / messages / responses）
+- **调试追踪**：请求与返回左右对照，JSON 语法高亮，SSE 流式合并输出
 
 <div align="center">
   <img src="docs/screenshots/playground.png" alt="playground-detail" width="700"/>
@@ -275,18 +262,30 @@
 
 - **单 Docker 容器**，默认本地数据目录部署，支持外接 MySQL / PostgreSQL 运行时数据库
 - Docker 镜像支持 `amd64`、`arm64` 和 `armv7l`（`linux/arm/v7`）服务端部署
-- 数据完整导入导出，迁移无忧
+- 站点配置导出导入（按平台 + 地址非破坏合并），数据完整导入导出，迁移无忧
+
+---
+
+## 🧩 相对原版的增强
+
+本分支在原版 Metapi 之上持续演进，除上游改进外还包括：
+
+- **用量分析**：独立 `/usage-analytics` 页面，7 维度使用拆解（总览/站点/模型/Key/客户端/账号/Token 构成）
+- **贡献热力图**：仪表盘内 GitHub 风格的每日请求热力图
+- **代理调试追踪**：操练场内可查看每次调用的请求/返回对照、JSON 高亮与 SSE 合并输出
+- **模型协议徽章**：基于真实代理日志识别模型实际走的上游协议，可配置回看窗口
+- **双层模型禁用**：账号级 + 站点级禁用并集生效，站点禁用模型同步过滤路由候选统计
+- **站点级并发控制**：按站点限制最大并发请求数
+- **Rerank 代理**：`/v1/rerank` 端点支持
+- **Gemini 原生桥接**：工具调用历史自动桥接 Gemini 原生 API，thought signature 正确回传
+- **结构化代理日志**：请求日志新增实际上游端点列，余额兜底推算更准确
+- **签到可靠性**：识别阿里云 ESA 浏览器挑战并给出明确诊断，签到失败原因可读
+- **设置页拆分**：`/settings` 按域拆分为多个子页，补齐任务开关、探测窗口等隐藏设置
+- **站点/账号搜索**：列表页模糊搜索 + 服务端分页
 
 ---
 
 ## 🚀 快速开始
-
-<a href="https://zeabur.com/templates/DOX5PR">
-  <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
-</a>
-<a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
-  <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
-</a>
 
 ### Docker Compose（推荐）
 
@@ -296,16 +295,16 @@ mkdir metapi && cd metapi
 cat > docker-compose.yml << 'EOF'
 services:
   metapi:
-    image: 1467078763/metapi:latest
+    image: jiqinga/metapi:latest
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     volumes:
       - ./data:/app/data
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
-      CHECKIN_CRON: "0 8 * * *"
-      BALANCE_REFRESH_CRON: "0 * * * *"
+      CHECKIN_CRON: "${CHECKIN_CRON:-0 8 * * *}"
+      BALANCE_REFRESH_CRON: "${BALANCE_REFRESH_CRON:-0 * * * *}"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
@@ -331,7 +330,7 @@ docker run -d --name metapi \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  1467078763/metapi:latest
+  jiqinga/metapi:latest
 ```
 
 </details>
@@ -352,9 +351,9 @@ docker run -d --name metapi \
 > 桌面安装包首次启动也属于这类场景：如果你没有额外注入 `AUTH_TOKEN`，默认管理员令牌同样是 `change-me-admin-token`。
 > 如果在「设置」面板中修改了管理员令牌，后续登录请使用新令牌。
 
-Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](https://metapi.cita777.me/deployment)。
+Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](./docs/deployment.md)。
 
-📖 **[环境变量与配置](https://metapi.cita777.me/configuration)** · **[客户端接入指南](https://metapi.cita777.me/client-integration)** · **[常见问题](https://metapi.cita777.me/faq)**
+📖 **[环境变量与配置](./docs/configuration.md)** · **[客户端接入指南](./docs/client-integration.md)** · **[常见问题](./docs/faq.md)**
 
 ---
 
@@ -431,9 +430,9 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 欢迎各种形式的贡献！
 
-- 🐛 报告 Bug — [提交 Issue](https://github.com/cita-777/metapi/issues)
-- 💡 功能建议 — [发起讨论](https://github.com/cita-777/metapi/issues)
-- 🔧 代码贡献 — [提交 Pull Request](https://github.com/cita-777/metapi/pulls)
+- 🐛 报告 Bug — [提交 Issue](https://github.com/jiqinga/metapi/issues)
+- 💡 功能建议 — [发起讨论](https://github.com/jiqinga/metapi/issues)
+- 🔧 代码贡献 — [提交 Pull Request](https://github.com/jiqinga/metapi/pulls)
 - 📝 贡献指南 — [CONTRIBUTING.md](CONTRIBUTING.md)
 - 📜 行为准则 — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -451,28 +450,14 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ---
 
-## 🙏 致谢
-
-感谢所有为 Metapi 提交代码、反馈问题、提供思路和实测数据的朋友。这个项目的很多能力，都是在社区的真实使用和反复打磨中慢慢长出来的。
-
-特别感谢所有贡献者：
-
-<a href="https://github.com/cita-777/metapi/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=cita-777/metapi" alt="Contributors" />
-</a>
-
----
-
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=jiqinga/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#jiqinga/metapi&type=date&legend=top-left)
 
 ---
 
 <div align="center">
 
 **⭐ 如果 Metapi 对你有帮助，给个 Star 就是最大的支持！**
-
-`<sub>`Built with ❤️ by the AI community`</sub>`
 
 </div>
