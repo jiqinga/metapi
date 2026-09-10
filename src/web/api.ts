@@ -28,6 +28,30 @@ function requireAuthToken(): string {
   return token;
 }
 
+/**
+ * Renders the tester-only `upstreamAttempts` error enrichment as a compact
+ * multi-line trail. The proxy attaches the full endpoint-attempt chain to
+ * terminal errors for trusted tester requests, so the playground can show
+ * what actually happened across endpoint fallbacks and channel retries.
+ */
+export function formatUpstreamAttemptsSection(json: unknown): string {
+  const raw = (json as any)?.upstreamAttempts;
+  if (!Array.isArray(raw) || raw.length === 0) return "";
+  const lines: string[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const endpoint = typeof entry.endpoint === "string" ? entry.endpoint : "unknown";
+    const path = typeof entry.path === "string" ? entry.path : "";
+    const status = typeof entry.status === "number" ? String(entry.status) : "?";
+    const message = typeof entry.message === "string"
+      ? entry.message.replace(/^\[upstream:[^\]]+\]\s*/, "")
+      : "";
+    lines.push(`· ${endpoint}${path ? ` → ${path}` : ""} → ${status}${message ? `: ${message}` : ""}`);
+  }
+  if (lines.length === 0) return "";
+  return `上游尝试链路（共 ${lines.length} 次）：\n${lines.join("\n")}`;
+}
+
 async function extractResponseErrorMessage(res: Response): Promise<string> {
   let message = `HTTP ${res.status}`;
   try {
@@ -46,6 +70,10 @@ async function extractResponseErrorMessage(res: Response): Promise<string> {
           message = json.error.message;
         } else {
           message = `${message}: ${text.slice(0, 120)}`;
+        }
+        const trailSection = formatUpstreamAttemptsSection(json);
+        if (trailSection) {
+          message = `${message}\n${trailSection}`;
         }
       } catch {
         message = `${message}: ${text.slice(0, 120)}`;

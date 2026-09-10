@@ -53,6 +53,10 @@ import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/
 import { detectDownstreamClientContext } from '../downstreamClientContext.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
+import {
+  attachUpstreamAttemptTrailForTester,
+  type SurfaceUpstreamAttemptTrailEntry,
+} from './upstreamAttemptTrail.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
 import {
@@ -86,6 +90,7 @@ import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
   getTesterForcedChannelId,
+  isTrustedTesterRequest,
 } from '../channelSelection.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -208,6 +213,11 @@ export async function handleChatSurfaceRequest(
     headers: request.headers as Record<string, unknown>,
     clientIp: request.ip,
   });
+  const isTesterRequest = isTrustedTesterRequest({
+    headers: request.headers as Record<string, unknown>,
+    clientIp: request.ip,
+  });
+  const upstreamAttemptTrail: SurfaceUpstreamAttemptTrailEntry[] = [];
   const owner = getProxyResourceOwner(request);
   let resolvedOpenAiBody = upstreamBody;
   if (owner) {
@@ -482,6 +492,12 @@ export async function handleChatSurfaceRequest(
           ctx.rawErrText || ctx.errText,
         ),
         onAttemptFailure: async (ctx) => {
+          upstreamAttemptTrail.push({
+            endpoint: ctx.request.endpoint,
+            path: ctx.request.path,
+            status: ctx.response.status,
+            message: ctx.errText,
+          });
           const memoryWrite = recordUpstreamEndpointFailure({
             ...endpointRuntimeContext,
             endpoint: ctx.request.endpoint,
@@ -816,12 +832,16 @@ export async function handleChatSurfaceRequest(
               retryCount += 1;
               continue;
             }
+            const terminalPayload = attachUpstreamAttemptTrailForTester(terminalFailureOutcome.payload, {
+              isTesterRequest,
+              attempts: upstreamAttemptTrail,
+            });
             await finalizeDebugFailure(
               terminalFailureOutcome.status,
-              terminalFailureOutcome.payload,
+              terminalPayload,
               successfulUpstreamPath,
             );
-            return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+            return reply.code(terminalFailureOutcome.status).send(terminalPayload);
           }
 
           const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, streamResponse);
@@ -1108,8 +1128,12 @@ export async function handleChatSurfaceRequest(
             },
           };
         }
-        await finalizeDebugFailure(endpointFailureStatus || 400, payload, null);
-        return reply.code(endpointFailureStatus || 400).send(payload);
+        const wrappedPayload = attachUpstreamAttemptTrailForTester(payload, {
+          isTesterRequest,
+          attempts: upstreamAttemptTrail,
+        });
+        await finalizeDebugFailure(endpointFailureStatus || 400, wrappedPayload, null);
+        return reply.code(endpointFailureStatus || 400).send(wrappedPayload);
       }
       if (isSiteApiEndpointFailure) {
         const failureOutcome = await failureToolkit.handleUpstreamFailure({
@@ -1132,12 +1156,16 @@ export async function handleChatSurfaceRequest(
           retryCount += 1;
           continue;
         }
+        const terminalPayload = attachUpstreamAttemptTrailForTester(terminalFailureOutcome.payload, {
+          isTesterRequest,
+          attempts: upstreamAttemptTrail,
+        });
         await finalizeDebugFailure(
           terminalFailureOutcome.status,
-          terminalFailureOutcome.payload,
+          terminalPayload,
           null,
         );
-        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+        return reply.code(terminalFailureOutcome.status).send(terminalPayload);
       }
       const failureOutcome = await failureToolkit.handleExecutionError({
         selected,
@@ -1157,12 +1185,16 @@ export async function handleChatSurfaceRequest(
         retryCount += 1;
         continue;
       }
+      const executionTerminalPayload = attachUpstreamAttemptTrailForTester(terminalFailureOutcome.payload, {
+        isTesterRequest,
+        attempts: upstreamAttemptTrail,
+      });
       await finalizeDebugFailure(
         terminalFailureOutcome.status,
-        terminalFailureOutcome.payload,
+        executionTerminalPayload,
         null,
       );
-      return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+      return reply.code(terminalFailureOutcome.status).send(executionTerminalPayload);
       } finally {
         channelLease.release();
       }

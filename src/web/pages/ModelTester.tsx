@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, setProxyTestTimeoutMs } from '../api.js';
+import { api, formatUpstreamAttemptsSection, setProxyTestTimeoutMs } from '../api.js';
 import {
   DEBUG_TABS,
   DEFAULT_INPUTS,
@@ -138,7 +138,9 @@ const formatJson = (value: unknown): string => {
 
 const extractErrorMessage = (error: unknown): string => {
   const data = error as any;
-  return data?.error?.message || data?.message || 'request failed';
+  const base = data?.error?.message || data?.message || 'request failed';
+  const trailSection = formatUpstreamAttemptsSection(data);
+  return trailSection ? `${base}\n${trailSection}` : base;
 };
 
 const extractClaudeMessageContent = (result: any): { content: string; reasoningContent: string } => {
