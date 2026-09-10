@@ -108,7 +108,7 @@ export default function UsageAnalytics() {
     const to = searchParams.get('to');
     // YYYY-MM-DD sanity check
     const isValid = (v: string | null) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
-    return isValid(from) && isValid(to) ? 'custom' : '7d';
+    return isValid(from) && isValid(to) ? 'custom' : 'today';
   });
   const [customFrom, setCustomFrom] = useState(() => {
     const from = searchParams.get('from');
