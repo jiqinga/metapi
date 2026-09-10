@@ -9,13 +9,13 @@ const mysqlUpgrade = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresUpgrade = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
 
 describe('schema upgrade parity', () => {
-  sqliteUpgrade('upgrades sqlite to the current contract', async () => {
+  sqliteUpgrade('upgrades sqlite to the current contract', { timeout: 60_000 }, async () => {
     const sqliteUrl = await applyContractFixtureThenUpgrade('sqlite', baselineContract, currentContract);
     const live = await introspectLiveSchema({ dialect: 'sqlite', connectionString: sqliteUrl });
     expect(live).toEqual(currentContract);
   });
 
-  mysqlUpgrade('upgrades mysql to the current contract', async () => {
+  mysqlUpgrade('upgrades mysql to the current contract', { timeout: 60_000 }, async () => {
     const mysqlUrl = await applyContractFixtureThenUpgrade('mysql', baselineContract, currentContract, {
       connectionString: process.env.DB_PARITY_MYSQL_URL!,
     });
@@ -23,7 +23,7 @@ describe('schema upgrade parity', () => {
     expect(live).toEqual(currentContract);
   });
 
-  postgresUpgrade('upgrades postgres to the current contract', async () => {
+  postgresUpgrade('upgrades postgres to the current contract', { timeout: 60_000 }, async () => {
     const postgresUrl = await applyContractFixtureThenUpgrade('postgres', baselineContract, currentContract, {
       connectionString: process.env.DB_PARITY_POSTGRES_URL!,
     });

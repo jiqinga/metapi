@@ -15,13 +15,13 @@ const mysqlParity = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresParity = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
 
 describe('live schema parity', () => {
-  sqliteParity('matches the contract for sqlite', async () => {
+  sqliteParity('matches the contract for sqlite', { timeout: 60_000 }, async () => {
     const sqliteUrl = await materializeFreshSchema('sqlite');
     const live = await introspectLiveSchema({ dialect: 'sqlite', connectionString: sqliteUrl });
     expect(live).toEqual(contract);
   });
 
-  mysqlParity('matches the contract for mysql', async () => {
+  mysqlParity('matches the contract for mysql', { timeout: 60_000 }, async () => {
     const mysqlUrl = await materializeFreshSchema('mysql', {
       connectionString: process.env.DB_PARITY_MYSQL_URL!,
     });
@@ -29,7 +29,7 @@ describe('live schema parity', () => {
     expect(live).toEqual(contract);
   });
 
-  postgresParity('matches the contract for postgres', async () => {
+  postgresParity('matches the contract for postgres', { timeout: 60_000 }, async () => {
     const postgresUrl = await materializeFreshSchema('postgres', {
       connectionString: process.env.DB_PARITY_POSTGRES_URL!,
     });

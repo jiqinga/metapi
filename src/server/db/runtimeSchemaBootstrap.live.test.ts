@@ -73,7 +73,7 @@ async function applyPostgresStatements(connectionString: string, statements: str
 }
 
 describe('runtime schema bootstrap live upgrade path', () => {
-  mysqlRuntime('upgrades mysql runtime schemas from an older live contract', async () => {
+  mysqlRuntime('upgrades mysql runtime schemas from an older live contract', { timeout: 60_000 }, async () => {
     const connectionString = process.env.DB_PARITY_MYSQL_URL!;
     const baselineStatements = __schemaIntrospectionTestUtils.splitSqlStatements(
       generateBootstrapSql('mysql', baselineContract),
@@ -91,7 +91,7 @@ describe('runtime schema bootstrap live upgrade path', () => {
     expect(live).toEqual(currentContract);
   });
 
-  postgresRuntime('upgrades postgres runtime schemas from an older live contract', async () => {
+  postgresRuntime('upgrades postgres runtime schemas from an older live contract', { timeout: 60_000 }, async () => {
     const connectionString = process.env.DB_PARITY_POSTGRES_URL!;
     const baselineStatements = __schemaIntrospectionTestUtils.splitSqlStatements(
       generateBootstrapSql('postgres', baselineContract),

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Dashboard from './Dashboard.js';
 import { installDashboardSnapshotCompat } from './testApiCompat.js';
@@ -79,9 +80,11 @@ describe('Dashboard site speed buttons', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
@@ -109,9 +112,11 @@ describe('Dashboard site speed buttons', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
