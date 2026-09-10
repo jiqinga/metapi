@@ -1045,7 +1045,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
     if (openAiResult.ok) {
       return { tokenType: 'apikey', models: openAiResult.models };
     }
-    verificationFailureMessage = openAiResult.error;
+    // 401 on /v1/models must not capture the failure message here; the ESA
+    // browser-verification diagnostic is raised by the session probes below.
 
     try {
       const directRes = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
